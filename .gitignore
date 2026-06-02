@@ -1,0 +1,11 @@
+.boss_profile/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+.env
+**/.env
+.DS_Store
+reports/
+.claude/

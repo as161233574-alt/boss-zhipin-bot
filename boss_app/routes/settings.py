@@ -1,0 +1,111 @@
+"""设置相关 API 路由。
+
+包含设置读写、投递转化漏斗统计、数据一致性修复等接口。
+"""
+
+from typing import Optional
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from ..core.websocket import ws_manager
+from ..models.application import (
+    get_today_application_count,
+    get_today_pending_count,
+    count_hours_replied_in_range,
+    count_interest_level,
+    reconcile_application_stats,
+)
+from ..models.conversation import list_active_conversations
+from ..models.settings import (
+    get_setting,
+    set_setting,
+    get_all_settings,
+    get_daily_stats,
+)
+
+router = APIRouter()
+
+
+# ══════════════════════════════════════
+#  Pydantic Models
+# ══════════════════════════════════════
+
+
+class SettingsUpdate(BaseModel):
+    greeting_template: Optional[str] = None
+    greeting_enabled: Optional[str] = None
+    ai_reply_style: Optional[str] = None
+    daily_apply_limit: Optional[str] = None
+    auto_reply_enabled: Optional[str] = None
+    min_reply_delay_sec: Optional[str] = None
+    max_reply_delay_sec: Optional[str] = None
+    batch_delay_min_sec: Optional[str] = None
+    batch_delay_max_sec: Optional[str] = None
+    resume_summary: Optional[str] = None
+    wechat_id: Optional[str] = None
+    search_keywords: Optional[str] = None  # 逗号分隔的搜索关键词
+    default_city: Optional[str] = None  # 默认搜索城市
+    selector_overrides: Optional[str] = None  # JSON 格式的选择器覆盖
+    ai_api_key: Optional[str] = None  # AI API Key
+    ai_base_url: Optional[str] = None  # AI Base URL
+    ai_model: Optional[str] = None  # AI 模型名称
+
+
+# ══════════════════════════════════════
+#  设置
+# ══════════════════════════════════════
+
+
+@router.get("/api/settings")
+def read_settings():
+    settings = get_all_settings()
+    # 检查AI Key是否已配置
+    ai_key = settings.get("ai_api_key", "")
+    settings["ai_key_configured"] = "true" if ai_key and len(ai_key) > 10 else "false"
+    return {"settings": settings}
+
+
+@router.put("/api/settings")
+async def update_settings(req: SettingsUpdate):
+    updates = {}
+    for k, v in req.model_dump().items():
+        if k == "ai_api_key" and v:
+            set_setting("ai_api_key", str(v))
+            updates["ai_key_configured"] = "true"
+            continue
+        if v is not None:
+            set_setting(k, str(v))
+            updates[k] = str(v)
+    await ws_manager.broadcast({"type": "settings_updated", "updates": updates})
+    return {"status": "ok", "updated": updates}
+
+
+# ══════════════════════════════════════
+#  统计
+# ══════════════════════════════════════
+
+
+@router.get("/api/stats")
+def get_stats():
+    """投递转化漏斗统计。"""
+    today = get_daily_stats()
+    return {
+        "today_applications": get_today_application_count(),
+        "pending": get_today_pending_count(),
+        "replied": count_hours_replied_in_range(24),
+        "interview": count_interest_level("high"),
+        "active_conversations": len(list_active_conversations()),
+        "daily_stats": today,
+    }
+
+
+@router.post("/api/stats/reconcile")
+def reconcile_stats():
+    """手动触发数据一致性校验，修复统计偏差。"""
+    fixed = reconcile_application_stats()
+    return {
+        "fixed": fixed,
+        "today_applications": get_today_application_count(),
+        "pending": get_today_pending_count(),
+    }

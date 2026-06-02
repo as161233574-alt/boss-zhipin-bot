@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lakejobai-job-radar"
+version = "0.1.0"
+description = "BOSS直聘岗位雷达 · AI驱动的智能求职助手"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "lakejob" }]
+dependencies = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "playwright>=1.40",
+    "beautifulsoup4>=4.12",
+    "lxml>=4.9",
+    "pyyaml>=6.0",
+    "httpx>=0.24",
+]
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest"]
+
+[project.scripts]
+lakejob = "lakejob_cli.cli:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["lakejob_cli"]
