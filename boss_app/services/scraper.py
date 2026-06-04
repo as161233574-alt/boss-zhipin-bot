@@ -415,7 +415,8 @@ class BossScraper:
 
         await self._ctx.add_init_script(ANTI_DETECT)
         self.page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
-        self.page.set_default_timeout(30000)
+        self.page.set_default_timeout(15000)
+        self.page.set_default_navigation_timeout(15000)
 
     async def close(self):
         if self._ctx:
@@ -525,13 +526,28 @@ class BossScraper:
             return False
 
     async def is_logged_in_page(self):
-        """当前页面是否能作为已登录态使用；about:blank 属于未知，不当作过期。"""
+        """当前页面是否能作为已登录态使用。"""
         try:
             url = self.page.url
         except Exception:
             return False
+        # about:blank 视为未登录（需要先访问BOSS直聘页面）
         if url == "about:blank":
-            return True
+            return False
+        # 检查页面标题是否包含登录相关关键词
+        try:
+            title = await self.page.title()
+            if any(kw in title for kw in ["登录", "注册", "login", "sign"]):
+                return False
+        except Exception:
+            pass
+        # 检查body是否为空（页面未加载）
+        try:
+            body = await self._body_text(1000)
+            if not body or len(body) < 50:
+                return False
+        except Exception:
+            pass
         return not await self._login_prompt_visible()
 
     async def login(self):
@@ -580,85 +596,151 @@ class BossScraper:
 
     async def _extract_current_page_jobs(self):
         """从当前页面提取岗位列表（单页，不翻页）。"""
-        dom_jobs = await self._extract_job_cards()
-        if dom_jobs:
-            return dom_jobs
+        # 检查页面是否需要登录
+        try:
+            login_check = await self.page.evaluate("""() => {
+                const body = document.body.innerText || '';
+                return {
+                    hasLogin: body.includes('登录') || body.includes('请先登录'),
+                    hasJobList: document.querySelectorAll('a[href*="/job_detail/"]').length,
+                    pageTitle: document.title,
+                    bodyLength: body.length,
+                    firstLines: body.split('\\n').slice(0, 10).join(' | ')
+                };
+            }""")
+            print(f"  [检查] 页面状态: {login_check}")
+            if login_check.get('hasLogin') and login_check.get('hasJobList', 0) == 0:
+                print(f"  [警告] 页面需要登录，请先在浏览器中登录BOSS直聘")
+                return []
+        except Exception as e:
+            print(f"  [检查] 页面检查失败: {e}")
 
-        body_text = await self.page.inner_text("body")
-        lines = [l.strip() for l in body_text.split("\n") if l.strip()]
-
-        sal_idx = [i for i, l in enumerate(lines) if re.search(r"\d+[-~]\d+K", decode_salary(l), re.I)]
+        # 直接从链接提取岗位
+        links = await self._extract_links()
+        print(f"  [提取] 找到 {len(links or [])} 个链接")
+        if not links:
+            return []
 
         jobs = []
-        for n, si in enumerate(sal_idx):
-            if n > 0 and si - sal_idx[n - 1] < 3:
+        for link in links:
+            url = link.get("href", "")
+            title = (link.get("title") or "").strip()
+            if not url or not title or len(title) < 2 or len(title) > 60:
                 continue
-            if si == 0:
+            # 排除非岗位标题
+            if re.search(r'公司|工商|安全|竞争力|评论|相似|推荐|首页|消息|简历|APP|海外|校招', title):
                 continue
-            title = lines[si - 1]
-            if not (2 < len(title) < 60):
-                continue
-
-            salary = decode_salary(lines[si])
-            if not re.search(r"\d+[Kk元]", salary):
-                continue
-
-            company = exp = edu = city = ""
-            end = sal_idx[n + 1] if n + 1 < len(sal_idx) else min(si + 10, len(lines))
-            for j in range(si + 1, min(end, len(lines))):
-                ln = lines[j]
-                if re.search(r"^\d+[-~]\d+年|^经验不限$|^应届$|^在校$", ln) and len(ln) < 20:
-                    exp = ln
-                elif re.search(r"^(本科|硕士|博士|大专|中专|高中|学历不限|不限)$", ln):
-                    edu = ln
-                elif "·" in ln and len(ln) < 30:
-                    city = ln.split("·")[0].strip()
-                elif (
-                    not company
-                    and len(ln) > 2
-                    and len(ln) < 40
-                    and not re.search(r"年|学历|大专|本科|硕士|博士|不限|应届|·|K/|元/", ln)
-                    and not re.search(r"\d", ln)
-                ):
-                    company = ln
-
-            jobs.append(
-                {
-                    "title": title,
-                    "salary": salary,
-                    "company": company,
-                    "experience": exp,
-                    "education": edu,
-                    "city": city,
-                    "url": "",
-                    "description": "",
-                    "hr_name": "",
-                    "hr_title": "",
-                }
-            )
-
-        links = await self._extract_links()
-        if links:
-            lm = {l["title"][:12]: l["href"] for l in links if l["title"][:12]}
-            for j in jobs:
-                if not j["url"] and j["title"][:12] in lm:
-                    j["url"] = lm[j["title"][:12]]
+            jobs.append({
+                "title": title,
+                "salary": "",
+                "company": "",
+                "experience": "",
+                "education": "",
+                "city": "",
+                "url": url,
+                "description": "",
+                "hr_name": "",
+                "hr_title": "",
+            })
+        print(f"  [提取] 过滤后 {len(jobs)} 个岗位")
         return jobs
 
-    async def search(self, keyword, city_code="100010000", max_pages=1):
-        """搜索关键词，返回当前页岗位列表。原项目策略：单页搜索，通过多城市×多关键词覆盖面。"""
+    async def search(self, keyword, city_code="100010000", max_pages=3):
+        """搜索关键词，支持无限滚动分页加载。
+
+        Args:
+            keyword: 搜索关键词
+            city_code: 城市代码
+            max_pages: 最大加载页数（默认3页，避免翻到死岗位）
+
+        Returns:
+            去重后的岗位列表
+        """
         url = "https://www.zhipin.com/web/geek/job?query=%s&city=%s" % (
             quote_plus(keyword),
             city_code,
         )
         for attempt in range(3):
             try:
-                await self.page.goto(url, wait_until="load", timeout=45000)
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 await async_pause(3, 5)
-                await self._scroll_all()
-                jobs = await self._extract_current_page_jobs()
-                print(f"  [搜索] {keyword}@{city_code}: 获取 {len(jobs)} 条")
-                return jobs
+
+                all_jobs = []
+                seen_urls = set()
+                no_new_count = 0
+                low_quality_count = 0  # 连续低质量页计数
+
+                for page in range(max_pages):
+                    # 提取当前页面岗位
+                    if page == 0:
+                        await self._scroll_all()
+                    else:
+                        # 滚动到底部触发加载
+                        old_job_count = await self.page.evaluate("""
+                            () => document.querySelectorAll('a[href*="/job_detail/"]').length
+                        """)
+                        scrolled = await self._scroll_to_bottom()
+                        if scrolled <= 0:
+                            print(f"  [分页] 第{page+1}页: 无法继续滚动，停止")
+                            break
+                        # 等待新内容加载
+                        loaded = await self._wait_for_new_jobs(old_job_count)
+                        if not loaded:
+                            print(f"  [分页] 第{page+1}页: 无新内容加载，停止")
+                            no_new_count += 1
+                            if no_new_count >= 2:
+                                break
+                            continue
+                        # 滚动加载后重新扫描全部内容
+                        await self._scroll_all()
+
+                    jobs = await self._extract_current_page_jobs()
+
+                    # 去重：只保留新岗位
+                    new_jobs = []
+                    for j in jobs:
+                        if j["url"] and j["url"] not in seen_urls:
+                            seen_urls.add(j["url"])
+                            new_jobs.append(j)
+                        elif not j["url"]:
+                            key = j["title"] + "|" + j["salary"] + "|" + j.get("company", "")
+                            if key not in seen_urls:
+                                seen_urls.add(key)
+                                new_jobs.append(j)
+
+                    if new_jobs:
+                        all_jobs.extend(new_jobs)
+                        no_new_count = 0
+                        # 检查新岗位质量：如果新增太少，可能是到了死岗位区域
+                        if len(new_jobs) <= 3:
+                            low_quality_count += 1
+                        else:
+                            low_quality_count = 0
+                        print(f"  [分页] 第{page+1}页: 新增 {len(new_jobs)} 条（累计 {len(all_jobs)} 条）")
+                    else:
+                        no_new_count += 1
+                        low_quality_count += 1
+                        print(f"  [分页] 第{page+1}页: 无新岗位")
+                        if no_new_count >= 2:
+                            break
+
+                    # 智能停止：连续50页低质量（<=3条新岗位），停止翻页
+                    if low_quality_count >= 50:
+                        print(f"  [分页] 连续低质量页，停止翻页")
+                        break
+
+                    # 已获取足够岗位（30+），停止
+                    if len(all_jobs) >= 30:
+                        print(f"  [分页] 已获取 {len(all_jobs)} 条，足够使用")
+                        break
+
+                    # 页间延迟
+                    if page < max_pages - 1:
+                        await async_pause(2, 3)
+
+                print(f"  [搜索] {keyword}@{city_code}: 共获取 {len(all_jobs)} 条（{min(page+1, max_pages)} 页）")
+                return all_jobs
+
             except Exception as e:
                 if attempt < 2:
                     print(f"  ⚠️ 搜索重试 ({attempt+1}/3): {e}")
@@ -683,86 +765,115 @@ class BossScraper:
     async def _extract_job_cards(self):
         """优先从岗位卡片 DOM 提取，避免正文行号变化导致链接和岗位错配。"""
         try:
+            # 先等待岗位列表加载
+            try:
+                await self.page.wait_for_selector('a[href*="/job_detail/"]', timeout=5000)
+            except Exception:
+                pass
+
             rows = await self.page.evaluate("""() => {
-                const pickText = (root, selectors) => {
-                    for (const sel of selectors) {
-                        const el = root.querySelector(sel);
-                        const text = (el && el.innerText || '').trim();
-                        if (text) return text;
-                    }
-                    return '';
-                };
-                const linesOf = (root) => (root.innerText || '')
-                    .split('\\n')
-                    .map(s => s.trim())
-                    .filter(Boolean);
                 const cards = [];
                 const seen = new Set();
-                document.querySelectorAll('a[href*="/job_detail/"]').forEach(a => {
-                    const href = a.href || a.getAttribute('href') || '';
-                    if (!href || seen.has(href)) return;
-                    const card = a.closest('.job-card-wrapper, .job-card-body, .job-primary, li, .job-list-box, .search-job-result') || a;
-                    const lines = linesOf(card);
+                // 遍历所有岗位链接
+                const allLinks = document.querySelectorAll('a[href*="/job_detail/"]');
+                const debugInfo = {totalLinks: allLinks.length, hrefs: []};
+                allLinks.forEach(a => {
+                    const rawHref = a.getAttribute('href') || '';
+                    debugInfo.hrefs.push(rawHref);
+                    if (!rawHref || seen.has(rawHref)) return;
+                    seen.add(rawHref);
+                    const href = a.href || rawHref;
 
-                    // 岗位名称
-                    let title = pickText(card, [
-                        '.job-name', '.job-title', '.job-card-left .job-name',
-                        '[class*="job-name"]', '[class*="job-title"]'
-                    ]) || (a.innerText || '').trim().split('\\n')[0] || lines[0] || '';
+                    // 向上找最近的卡片容器（最多8层）
+                    let card = a;
+                    for (let i = 0; i < 8; i++) {
+                        card = card.parentElement;
+                        if (!card) break;
+                        const cls = card.className || '';
+                        if (cls.includes('job-card') || cls.includes('job-primary') ||
+                            cls.includes('search-job') || cls.includes('job-list') ||
+                            card.tagName === 'LI') break;
+                    }
+                    if (!card) card = a;
 
-                    // 薪资
-                    let salary = pickText(card, ['.salary', '.red', '[class*="salary"]'])
-                        || lines.find(x => /\\d+[-~]\\d+K/i.test(x)) || '';
+                    const text = (card.innerText || '').trim();
+                    const lines = text.split('\\n').map(s => s.trim()).filter(Boolean);
 
-                    // 公司名称 — 从多个选择器尝试
-                    let company = pickText(card, [
-                        '.company-name', '.brand-name', '.company-text',
-                        '[class*="company-name"]', '[class*="brand-name"]',
-                        '.info-company .name', '.company-info .name',
-                        '[class*="company"] [class*="name"]',
-                    ]);
+                    // 薪资：匹配 XX-XXK 格式
+                    let salary = '';
+                    for (const l of lines) {
+                        if (/\\d+[-~]\\d+[Kk元]/.test(l) && l.length < 30) {
+                            salary = l;
+                            break;
+                        }
+                    }
+                    if (!salary) return; // 没有薪资的跳过
 
-                    // 城市 — 只取「·」前面的城市名，去掉区域
-                    let cityRaw = pickText(card, ['.job-area', '[class*="job-area"]'])
-                        || lines.find(x => x.includes('·') && x.length < 40) || '';
-                    let city = cityRaw.split('·')[0].trim();
+                    // 岗位名称：薪资前一行，或链接文字第一行
+                    let title = '';
+                    const salIdx = lines.indexOf(salary);
+                    if (salIdx > 0) {
+                        title = lines[salIdx - 1];
+                    }
+                    if (!title) {
+                        title = (a.innerText || '').trim().split('\\n')[0];
+                    }
+                    if (!title || title.length < 2 || title.length > 60) return;
+                    if (/公司|工商|安全|竞争力|评论|相似|推荐/.test(title)) return;
 
-                    // 经验 & 学历 — 从标签行精确匹配
+                    // 公司名称：薪资后找不含数字/经验/学历的行
+                    let company = '';
+                    const skipPat = /\\d+[-~]|经验|应届|在校|本科|硕士|博士|大专|中专|学历|不限|K\\/|元\\/|天\\/周|薪|·|五险|社保|福利/i;
+                    for (let i = (salIdx >= 0 ? salIdx + 1 : 1); i < Math.min(lines.length, (salIdx >= 0 ? salIdx + 8 : 8)); i++) {
+                        const l = lines[i];
+                        if (l.length >= 2 && l.length <= 40 && !skipPat.test(l) && !/^\\d/.test(l)) {
+                            company = l;
+                            break;
+                        }
+                    }
+
+                    // 城市
+                    let city = '';
+                    for (const l of lines) {
+                        if (l.includes('·') && l.length < 30) {
+                            city = l.split('·')[0].trim();
+                            break;
+                        }
+                    }
+
+                    // 经验 & 学历
                     let experience = lines.find(x => /^\\d+[-~]\\d+年|^\\d+年|^经验不限$|^应届$|^在校$/.test(x) && x.length < 20) || '';
-                    let education = lines.find(x => /^(本科|硕士|博士|大专|中专|中技|高中|学历不限|不限|中专\\/中技|大专\\/中专)$/.test(x)) || '';
+                    let education = lines.find(x => /^(本科|硕士|博士|大专|中专|中技|高中|学历不限|不限)$/.test(x)) || '';
 
-                    // 工作时间模式（如 5天/周、4天/周、6天/周）
-                    let workSchedule = lines.find(x => /^\\d+天\\/周$/.test(x)) || '';
-
-                    // 公司名校验：排除薪资、经验、学历、工作时间等
-                    const invalidCo = /\\d+[-~]\\d+|经验|应届|在校|本科|硕士|博士|大专|学历|不限|K\\/|元|天\\/周|薪$/;
-                    if (company && (company.length < 2 || company.length > 40 || invalidCo.test(company))) {
-                        company = '';
-                    }
-
-                    // Fallback：从剩余行中找公司名（排除已知字段、薪资、工作时间）
-                    if (!company) {
-                        const skipSet = new Set([title, salary, cityRaw, experience, education, workSchedule]);
-                        const skipPat = /经验|应届|在校|本科|硕士|博士|大专|中专|中技|学历|不限|·|^\\d+[-~]\\d+[Kk]|K\\/|元\\/|天\\/周|薪$|五险|社保|公积金|年终奖|带薪|餐补|房补|交通补/i;
-                        company = lines.find(x =>
-                            !skipSet.has(x) && !skipPat.test(x) && x.length > 1 && x.length < 40
-                        ) || '';
-                    }
-
-                    title = title.replace(/\\s+/g, ' ').trim();
-                    if (title && salary) {
-                        seen.add(href);
-                        cards.push({title, salary, company, city, experience, education, url: href});
-                    }
+                    cards.push({title, salary, company, city, experience, education, url: href, _debug: lines.slice(0, 3).join(' | ')});
                 });
-                return cards;
+                return {cards, debug: debugInfo};
             }""")
         except Exception:
             return []
 
-        jobs = []
+        if not rows or not rows.get("cards"):
+            # 调试：打印页面上的链接信息
+            try:
+                debug = await self.page.evaluate("""() => {
+                    const links = document.querySelectorAll('a[href*="/job_detail/"]');
+                    return {
+                        count: links.length,
+                        hrefs: Array.from(links).slice(0, 5).map(a => a.getAttribute('href')),
+                        classes: Array.from(document.querySelectorAll('[class*="job"]')).slice(0, 10).map(e => e.className)
+                    };
+                }""")
+                print(f"  [调试] 页面链接数: {debug.get('count', 0)}, hrefs: {debug.get('hrefs', [])}, classes: {debug.get('classes', [])[:5]}")
+            except Exception:
+                pass
+            return []
+
+        debug_info = rows.get("debug", {})
+        print(f"  [调试] 找到 {len(rows['cards'])} 个岗位卡片, 总链接数: {debug_info.get('totalLinks', 0)}, 去重后href数: {len(debug_info.get('hrefs', []))}")
+
+        result = []
         seen = set()
-        for row in rows or []:
+        for row in rows["cards"]:
             url = (row.get("url") or "").strip()
             title = (row.get("title") or "").strip()
             if not url or not title or url in seen:
@@ -774,31 +885,25 @@ class BossScraper:
             experience = (row.get("experience") or "").strip()
             education = (row.get("education") or "").strip()
 
-            # 薪资校验：必须含 K 或 元/天，且范围合理
             if not re.search(r'\d+[Kk元]', salary):
                 continue
-            # 公司名校验：清除误识别的工作时间、薪资格式等
-            if company:
-                if re.match(r'^\d+[-~]\d+[Kk]', company) or re.match(r'^\d+天/周$', company) or re.match(r'^\d+薪$', company):
-                    company = ""
 
-            jobs.append(
-                {
-                    "title": title,
-                    "salary": salary,
-                    "company": company,
-                    "experience": experience,
-                    "education": education,
-                    "city": city,
-                    "url": url,
-                    "description": "",
-                    "hr_name": "",
-                    "hr_title": "",
-                }
-            )
-        return jobs
+            result.append({
+                "title": title,
+                "salary": salary,
+                "company": company,
+                "experience": experience,
+                "education": education,
+                "city": city,
+                "url": url,
+                "description": "",
+                "hr_name": "",
+                "hr_title": "",
+            })
+        return result
 
     async def _scroll_all(self):
+        """滚动加载所有岗位（单页内）。"""
         try:
             h = await self.page.evaluate("document.body.scrollHeight")
             for p in range(0, int(h) + 400, 400):
@@ -807,40 +912,157 @@ class BossScraper:
         except Exception:
             pass
 
+    async def _scroll_to_bottom(self):
+        """滚动到页面底部，触发无限加载。返回新增内容高度。"""
+        try:
+            old_height = await self.page.evaluate("document.body.scrollHeight")
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(random.uniform(1.5, 2.5))
+            new_height = await self.page.evaluate("document.body.scrollHeight")
+            return new_height - old_height
+        except Exception:
+            return 0
+
+    async def _wait_for_new_jobs(self, old_count, timeout=8):
+        """等待新岗位加载完成。"""
+        start = time.time()
+        while time.time() - start < timeout:
+            current = await self.page.evaluate("""
+                () => document.querySelectorAll('a[href*="/job_detail/"]').length
+            """)
+            if current > old_count:
+                return True
+            await asyncio.sleep(0.5)
+        return False
+
+    @staticmethod
+    def is_hr_inactive(activity_text: str) -> bool:
+        """判断 HR 是否不活跃（超过7天未活跃）。
+
+        活跃度映射：
+        - 刚刚活跃/今日活跃/日内活跃/本周活跃 → 活跃（7天内）
+        - 本月活跃/半年前活跃/近半年活跃 → 不活跃（超过7天）
+        - 空值 → 视为不活跃（无法确认）
+        """
+        if not activity_text:
+            return True  # 无活跃信息，视为不活跃
+        # 7天内活跃的关键词（与 score_hr_activity 保持一致）
+        active_patterns = ['刚刚活跃', '今日活跃', '日内活跃', '本周活跃']
+        for pat in active_patterns:
+            if pat in activity_text:
+                return False
+        # 本月及更早视为不活跃
+        return True
+
     async def _extract_links(self):
         try:
-            return await self.page.evaluate("""()=>{
+            result = await self.page.evaluate("""()=>{
                 const r=[];const s=new Set();
-                document.querySelectorAll('a[href*="/job_detail/"]').forEach(a=>{
-                    const h=a.href,t=(a.innerText||'').trim();
-                    if(h&&t&&!s.has(h)&&t.length<60){s.add(h);r.push({href:h,title:t.substring(0,60)});}
-                });return r;
+                const all = document.querySelectorAll('a[href*="/job_detail/"]');
+                const debugHrefs = [];
+                all.forEach(a=>{
+                    const raw = a.getAttribute('href') || '';
+                    const full = a.href || raw;
+                    const t=(a.innerText||'').trim();
+                    debugHrefs.push({raw: raw.substring(0, 80), full: full.substring(0, 80), title: t.substring(0, 30)});
+                    // 用 raw href 去重（相对路径），但存储 full href
+                    if(raw && t && !s.has(raw) && t.length<60){s.add(raw);r.push({href:full,title:t.substring(0,60)});}
+                });
+                return {links: r, total: all.length, url: location.href, sample: debugHrefs.slice(0, 5)};
             }""")
-        except Exception:
+            print(f"  [链接] 页面URL: {result.get('url','?')}")
+            print(f"  [链接] 总链接: {result.get('total',0)}, 有效: {len(result.get('links',[]))}")
+            print(f"  [链接] 样本: {result.get('sample',[])}")
+            return result.get("links", [])
+        except Exception as e:
+            print(f"  [链接] 提取失败: {e}")
             return []
 
     # ── 详情页 ──
 
     async def fetch_detail(self, url):
-        """访问详情页，提取岗位描述 + HR/招聘者信息（含重试）"""
-        result = {"description": "", "hr_name": "", "hr_title": ""}
+        """访问详情页，提取岗位描述 + HR/招聘者信息 + HR活跃度（含重试）"""
+        result = {"description": "", "hr_name": "", "hr_title": "", "hr_activity": ""}
+        print(f"  [详情] 开始抓取: {url}")
+        try:
+            # 外层超时调整为 70s，确保内层重试能完整执行（20s × 3 次 + 缓冲时间）
+            return await asyncio.wait_for(self._fetch_detail_inner(url, result), timeout=70)
+        except asyncio.TimeoutError:
+            print(f"  ❌ 详情抓取全局超时(70s): {url}")
+            return result
+
+    async def _fetch_detail_inner(self, url, result):
+        """fetch_detail 的内部实现。"""
         for attempt in range(3):
             try:
-                await self.page.goto(url, wait_until="load", timeout=45000)
+                # 先关闭可能的弹窗/对话框
+                try:
+                    await self.page.keyboard.press("Escape")
+                    await asyncio.sleep(0.2)
+                except Exception:
+                    pass
+                # 用 asyncio.wait_for 包裹导航，确保超时生效
+                try:
+                    await asyncio.wait_for(
+                        self.page.goto(url, wait_until="commit", timeout=15000),
+                        timeout=20
+                    )
+                except asyncio.TimeoutError:
+                    print(f"  ⚠️ 页面导航超时(20s) ({attempt+1}/3): {url}")
+                    if attempt < 2:
+                        try:
+                            await self.page.goto("about:blank", timeout=3000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1)
+                        continue
+                    return result
+                # 等待页面内容加载
+                try:
+                    await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                # 验证是否真正跳转到了目标页面
+                current = self.page.url
+                if "job_detail" not in current and "job/" not in current:
+                    print(f"  ⚠️ 页面未跳转到详情页，当前URL: {current}")
+                    if attempt < 2:
+                        # 尝试刷新页面恢复
+                        try:
+                            await self.page.reload(wait_until="domcontentloaded", timeout=5000)
+                        except Exception:
+                            pass
+                        await async_pause(1, 2)
+                        continue
+                    return result
+                print(f"  [详情] 页面加载完成: {current}")
                 break
             except Exception as e:
+                print(f"  ⚠️ 详情页异常 ({attempt+1}/3): {e}")
                 if attempt < 2:
-                    print(f"  ⚠️ 详情页重试 ({attempt+1}/3): {e}")
-                    await async_pause(2, 4)
+                    # 尝试导航到空白页重置浏览器状态
+                    try:
+                        await self.page.goto("about:blank", timeout=3000)
+                    except Exception:
+                        pass
+                    await async_pause(1, 2)
                 else:
-                    print(f"  ❌ 详情页失败: {url}: {e}")
+                    print(f"  ❌ 详情页失败: {url}")
                     return result
         try:
-            await async_pause(2, 4)
+            await async_pause(0.5, 1)
+            print(f"  [详情] 开始提取数据")
 
-            # ── 提取招聘者信息 ──
+            # 先关闭可能的弹窗
             try:
-                hr_info = await self.page.evaluate("""() => {
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+            # ── 提取招聘者信息（带超时）──
+            try:
+                hr_info = await asyncio.wait_for(self.page.evaluate("""() => {
                     const body = document.body.innerText || '';
                     const lines = body.split('\\n').map(l => l.trim()).filter(Boolean);
                     let hrName = '', hrTitle = '';
@@ -869,15 +1091,92 @@ class BossScraper:
                             }
                         }
                     }
-                    return {hrName, hrTitle};
-                }""")
+                    // HR活跃度提取
+                    const activityPatterns = ['刚刚活跃', '今日活跃', '日内活跃', '本周活跃', '本月活跃', '半年前活跃', '近半年活跃'];
+                    let activity = '';
+                    for (const line of lines) {
+                        for (const pat of activityPatterns) {
+                            if (line.includes(pat)) { activity = pat; break; }
+                        }
+                        if (activity) break;
+                    }
+                    if (!activity) {
+                        const actEls = document.querySelectorAll('[class*="active-time"], [class*="activity"], .boss-info-time');
+                        for (const el of actEls) {
+                            const t = (el.innerText || '').trim();
+                            for (const pat of activityPatterns) {
+                                if (t.includes(pat)) { activity = pat; break; }
+                            }
+                            if (activity) break;
+                        }
+                    }
+                    return {hrName, hrTitle, activity};
+                }"""), timeout=10)
                 result["hr_name"] = (hr_info.get("hrName") or "").strip()
                 result["hr_title"] = (hr_info.get("hrTitle") or "").strip()
+                result["hr_activity"] = (hr_info.get("activity") or "").strip()
+                print(f"  [详情] HR信息提取完成: {result['hr_name']} | {result['hr_activity']}")
+            except asyncio.TimeoutError:
+                print(f"  ⚠️ HR信息提取超时(10s)")
+            except Exception as e:
+                print(f"  ⚠️ HR信息提取异常: {e}")
+
+            # ── 提取岗位描述（带超时）──
+            desc_text = ""
+            try:
+                desc_selectors = [
+                    '.job-detail-section .job-sec-text',
+                    '.job-sec-text',
+                    '.job-detail',
+                    '[class*="job-detail"]',
+                    '.text-job',
+                ]
+                for sel in desc_selectors:
+                    try:
+                        el = await asyncio.wait_for(self.page.query_selector(sel), timeout=5)
+                    except asyncio.TimeoutError:
+                        print(f"  ⚠️ 选择器 {sel} 超时")
+                        continue
+                    if el:
+                        try:
+                            desc_text = (await asyncio.wait_for(el.inner_text(), timeout=5)).strip()
+                        except asyncio.TimeoutError:
+                            print(f"  ⚠️ 元素文本提取超时")
+                            continue
+                        if desc_text and len(desc_text) > 20:
+                            print(f"  [详情] CSS描述提取成功: {len(desc_text)}字 (选择器: {sel})")
+                            break
+                        desc_text = ""
+            except Exception as e:
+                print(f"  ⚠️ CSS描述提取异常: {e}")
+
+            print(f"  [详情] 开始提取页面文本...")
+            # 再次关闭弹窗
+            try:
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.2)
             except Exception:
                 pass
-
-            # ── 提取岗位描述 ──
-            body = await self.page.inner_text("body")
+            body = None
+            # 使用 JavaScript 直接提取，比 inner_text 更可靠
+            try:
+                body = await asyncio.wait_for(
+                    self.page.evaluate("() => document.body ? document.body.innerText : ''"),
+                    timeout=8
+                )
+            except asyncio.TimeoutError:
+                print(f"  ⚠️ JavaScript文本提取超时(8s)")
+            except Exception as e:
+                print(f"  ⚠️ JavaScript文本提取异常: {e}")
+            if not body:
+                # 最后尝试 inner_text
+                try:
+                    body = await asyncio.wait_for(self.page.inner_text("body"), timeout=5)
+                except Exception:
+                    pass
+            if not body:
+                print(f"  ⚠️ 页面文本提取失败，跳过")
+                return result
             lines = [l.strip() for l in body.split("\n") if l.strip()]
 
             skill_lines = []
@@ -887,6 +1186,7 @@ class BossScraper:
                     capture = True
                     continue
                 if capture:
+                    # 停止词：遇到这些标记说明描述部分结束
                     if any(
                         stop in l
                         for stop in [
@@ -894,11 +1194,55 @@ class BossScraper:
                             "工商信息",
                             "BOSS 安全提示",
                             "竞争力分析",
+                            "相似职位",
+                            "推荐公司",
+                            "该公司的其他职位",
                         ]
                     ):
                         break
+                    # 跳过HR信息行（名字、活跃状态、公司名后缀）
+                    if re.match(r'^(刚刚活跃|今日活跃|\d+日内活跃|日内活跃|本周活跃|本月活跃|半年前活跃|近半年活跃)$', l):
+                        continue
+                    if l in ("招聘者", "招聘经理", "HR", "HRBP", "人事", "猎头"):
+                        continue
+                    # 跳过公司名后的装饰行
+                    if l in ("·", "招聘者", "BOSS"):
+                        continue
                     skill_lines.append(l)
-            result["description"] = "\n".join(skill_lines) if skill_lines else ""
+            # 清理尾部可能混入的HR信息
+            while skill_lines and skill_lines[-1] in ("·", "招聘者", "招聘经理", "HR", "HRBP", "人事", "猎头", "BOSS"):
+                skill_lines.pop()
+            # 移除尾部的活跃状态和公司信息
+            cleaned = []
+            for l in skill_lines:
+                if re.match(r'^(刚刚活跃|今日活跃|\d+日内活跃|日内活跃|本周活跃|本月活跃|半年前活跃|近半年活跃)$', l):
+                    continue
+                cleaned.append(l)
+
+            # 清理CSS选择器提取的描述中的HR信息和无关内容
+            if desc_text:
+                desc_lines = [l.strip() for l in desc_text.split("\n") if l.strip()]
+                filtered_desc = []
+                for dl in desc_lines:
+                    # 跳过HR活跃状态
+                    if re.match(r'^(刚刚活跃|今日活跃|\d+日内活跃|日内活跃|本周活跃|本月活跃|半年前活跃|近半年活跃)$', dl):
+                        continue
+                    # 跳过HR相关标记
+                    if dl in ("·", "招聘者", "招聘经理", "HR", "HRBP", "人事", "猎头", "BOSS"):
+                        continue
+                    # 跳过停止词后的内容
+                    if any(stop in dl for stop in ["公司介绍", "工商信息", "BOSS 安全提示", "竞争力分析",
+                                                    "相似职位", "推荐公司", "该公司的其他职位", "看过该职位的人还看了"]):
+                        break
+                    filtered_desc.append(dl)
+                desc_text = "\n".join(filtered_desc)
+
+            # 优先使用CSS选择器提取的描述，如果更完整的话
+            text_desc = "\n".join(cleaned) if cleaned else ""
+            if desc_text and len(desc_text) > len(text_desc):
+                result["description"] = desc_text
+            else:
+                result["description"] = text_desc
 
             # 如果 JS 没抓到招聘者信息，从文本中尝试解析
             if not result["hr_name"]:
@@ -909,8 +1253,10 @@ class BossScraper:
                             result["hr_title"] = l
                             break
 
-        except Exception:
-            pass
+            print(f"  [详情] 提取完成: desc={len(result['description'])}字 HR={result['hr_name']} 活跃={result['hr_activity']}")
+
+        except Exception as e:
+            print(f"  ⚠️ 数据提取异常: {e}")
         return result
 
 

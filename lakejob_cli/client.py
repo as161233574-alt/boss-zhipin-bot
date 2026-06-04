@@ -1,14 +1,49 @@
 """HTTP client for lakejob FastAPI backend."""
 
 import os
+from pathlib import Path
+
 import httpx
 
 BASE_URL = os.environ.get("LAKEJOB_API", "http://127.0.0.1:8010")
 
 
+def _load_token() -> str:
+    """Token resolution order: env LAKEJOB_TOKEN -> .boss_profile/.api_token -> ''."""
+    env = os.environ.get("LAKEJOB_TOKEN", "").strip()
+    if env:
+        return env
+    # 项目根 .boss_profile/.api_token（CLI 与 server 共用约定）
+    here = Path(__file__).resolve()
+    for parent in [here.parent.parent, *here.parents]:
+        candidate = parent / ".boss_profile" / ".api_token"
+        if candidate.exists():
+            try:
+                return candidate.read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+    # cwd 兜底
+    cwd_candidate = Path.cwd() / ".boss_profile" / ".api_token"
+    if cwd_candidate.exists():
+        try:
+            return cwd_candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    return ""
+
+
+_TOKEN = _load_token()
+
+
+def _headers() -> dict:
+    return {"Authorization": f"Bearer {_TOKEN}"} if _TOKEN else {}
+
+
 def _post(path: str, json=None, timeout=120):
     try:
-        resp = httpx.post(f"{BASE_URL}{path}", json=json, timeout=timeout)
+        resp = httpx.post(
+            f"{BASE_URL}{path}", json=json, timeout=timeout, headers=_headers()
+        )
     except httpx.ConnectError:
         resp = httpx.Response(503, text="Cannot connect to lakejob server. Run `lakejob server --start` first.")
     return resp
@@ -16,7 +51,7 @@ def _post(path: str, json=None, timeout=120):
 
 def _get(path: str, timeout=30):
     try:
-        resp = httpx.get(f"{BASE_URL}{path}", timeout=timeout)
+        resp = httpx.get(f"{BASE_URL}{path}", timeout=timeout, headers=_headers())
     except httpx.ConnectError:
         resp = httpx.Response(503, text="Cannot connect to lakejob server. Run `lakejob server --start` first.")
     return resp
@@ -92,5 +127,5 @@ def add_shortlist(job_url: str, title: str = "", company: str = "", salary: str 
 
 
 def remove_shortlist(sid: int):
-    resp = httpx.delete(f"{BASE_URL}/api/shortlists/{sid}", timeout=30)
+    resp = httpx.delete(f"{BASE_URL}/api/shortlists/{sid}", timeout=30, headers=_headers())
     return resp

@@ -22,6 +22,8 @@ from ..models.settings import (
     set_setting,
     get_all_settings,
     get_daily_stats,
+    get_stats_range,
+    get_funnel_stats,
 )
 
 router = APIRouter()
@@ -50,6 +52,12 @@ class SettingsUpdate(BaseModel):
     ai_api_key: Optional[str] = None  # AI API Key
     ai_base_url: Optional[str] = None  # AI Base URL
     ai_model: Optional[str] = None  # AI 模型名称
+    auto_schedule_enabled: Optional[str] = None  # 定时任务开关
+    auto_schedule_cron: Optional[str] = None  # 定时任务时间
+    auto_apply_enabled: Optional[str] = None  # 自动投递开关
+    auto_apply_threshold: Optional[str] = None  # 自动投递最低综合分阈值
+    auto_apply_hr_active_required: Optional[str] = None  # 自动投递是否要求HR活跃
+    filter_inactive_hr: Optional[str] = None  # 过滤3天以上不活跃HR岗位
 
 
 # ══════════════════════════════════════
@@ -63,6 +71,7 @@ def read_settings():
     # 检查AI Key是否已配置
     ai_key = settings.get("ai_api_key", "")
     settings["ai_key_configured"] = "true" if ai_key and len(ai_key) > 10 else "false"
+    settings.pop("ai_api_key", None)  # 不泄露完整密钥
     return {"settings": settings}
 
 
@@ -109,3 +118,15 @@ def reconcile_stats():
         "today_applications": get_today_application_count(),
         "pending": get_today_pending_count(),
     }
+
+
+@router.get("/api/stats/trend")
+def get_trend(days: int = 7):
+    """返回最近 N 天的每日统计数据数组。"""
+    return {"trend": get_stats_range(days)}
+
+
+@router.get("/api/stats/funnel")
+def get_funnel():
+    """返回转化漏斗数据。"""
+    return get_funnel_stats()

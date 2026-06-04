@@ -78,7 +78,7 @@ async def selectors_status():
     """检查所有关键选择器的有效性。"""
     if not state.automation or state.automation.page is None:
         raise HTTPException(status_code=503, detail="浏览器未启动")
-    from boss_automation import SELECTORS
+    from ..services.automation import SELECTORS
 
     result = await state.automation.page.evaluate(
         """(groups) => {

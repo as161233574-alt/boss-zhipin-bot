@@ -1,7 +1,13 @@
 """FastAPI 应用入口"""
 import asyncio
 import json
+import secrets
+import sys
 from pathlib import Path
+
+# Windows 兼容性：设置事件循环策略以支持 Playwright 子进程
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +21,7 @@ from .routes.system import router as system_router
 from .routes.debug import router as debug_router
 from .core.websocket import ws_manager
 from .core.monitor import chat_monitor
+from .core.scheduler import auto_scheduler
 from .core.database import get_db, init_db
 from .core import state
 from boss_state import (
@@ -26,9 +33,43 @@ from boss_state import (
 # ── FastAPI 应用 ──
 app = FastAPI(title="BOSS直聘自动化控制台", version="2.0.0")
 
+# ── API 认证 Token ──
+API_TOKEN_FILE = Path(__file__).parent.parent / ".boss_profile" / ".api_token"
+API_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+if API_TOKEN_FILE.exists():
+    API_TOKEN = API_TOKEN_FILE.read_text(encoding="utf-8").strip()
+else:
+    API_TOKEN = secrets.token_urlsafe(32)
+    API_TOKEN_FILE.write_text(API_TOKEN, encoding="utf-8")
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """API 接口认证中间件：所有 /api/* 请求需要携带有效 Token。"""
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # 放行：首页、静态资源、WebSocket
+        if (path == "/" or path.startswith("/static") or path == "/ws"):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            auth = request.headers.get("Authorization", "")
+            if auth.startswith("Bearer ") and secrets.compare_digest(auth[7:], API_TOKEN):
+                return await call_next(request)
+            # 也支持 query 参数传 token（用于 SSE 等场景）
+            if secrets.compare_digest(request.query_params.get("token", ""), API_TOKEN):
+                return await call_next(request)
+            return JSONResponse({"error": "未授权访问，请在设置中配置 API Token"}, status_code=401)
+        return await call_next(request)
+
+
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:8010", "http://localhost:8010"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,7 +107,18 @@ async def on_startup():
             "SELECT id, job_title, company, city, salary FROM applications WHERE (dedup_key IS NULL OR dedup_key='') AND deleted_at IS NULL"
         ).fetchall()
         for row in missing:
-            key = compute_dedup_key({"title": row[1], "company": row[2], "city": row[3], "salary": row[4]})
+            def _s(v):
+                if v is None:
+                    return ""
+                if isinstance(v, (list, tuple)):
+                    return ",".join(str(x) for x in v)
+                return str(v)
+            key = compute_dedup_key({
+                "title": _s(row[1]),
+                "company": _s(row[2]),
+                "city": _s(row[3]),
+                "salary": _s(row[4]),
+            })
             if key:
                 db2.execute("UPDATE applications SET dedup_key=? WHERE id=?", (key, row[0]))
         if missing:
@@ -93,19 +145,43 @@ async def on_startup():
         db.commit()
     except Exception as e:
         print(f"[启动] 会话清理失败: {e}")
+    # 启动定时调度器（如果已启用）
+    try:
+        from .models.settings import get_setting
+        if get_setting("auto_schedule_enabled", "false") == "true":
+            auto_scheduler.start(state.automation, ws_manager)
+            print("[启动] 定时调度器已启动")
+    except Exception as e:
+        print(f"[启动] 调度器启动失败: {e}")
     print(f"\n🚀 BOSS直聘自动化控制台: http://127.0.0.1:8010")
+    print(f"   API Token: {API_TOKEN[:6]}****")
+    print(f"   Token 文件: {API_TOKEN_FILE}")
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
     index_path = static_dir / "dashboard.html"
     if index_path.exists():
-        return index_path.read_text(encoding="utf-8")
+        from fastapi.responses import Response
+        content = index_path.read_text(encoding="utf-8")
+        # 将 Token 直接注入 HTML，避免暴露 /api/auth/token 端点
+        inject = f"<script>window.__API_TOKEN__='{API_TOKEN}';</script>"
+        content = content.replace("</head>", inject + "</head>", 1)
+        return Response(
+            content=content,
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return "<h1>Dashboard not found</h1>"
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # WebSocket 认证：验证 token query 参数
+    token = websocket.query_params.get("token", "")
+    if not token or not secrets.compare_digest(token, API_TOKEN):
+        await websocket.close(code=4001, reason="未授权")
+        return
     await ws_manager.connect(websocket)
     try:
         while True:

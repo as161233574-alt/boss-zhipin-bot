@@ -18,7 +18,6 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -338,62 +337,90 @@ def classify(text):
 # 存 MySQL
 # ============================================================
 
+def _get_mysql_conn(cfg):
+    """获取 MySQL 连接（使用 mysql.connector 参数化查询）。"""
+    try:
+        import mysql.connector
+        return mysql.connector.connect(
+            host=cfg["db_host"],
+            user=cfg["db_user"],
+            password=cfg["db_password"],
+            database=cfg["db_name"],
+        )
+    except ImportError:
+        print("错误：需要安装 mysql-connector-python: pip install mysql-connector-python")
+        return None
+
+
 def save_to_db(jobs, cfg):
     if cfg["no_db"]:
         return
-    for j in jobs:
-        cls = classify(j["title"] + " " + j.get("requirements","") + " " + j.get("experience","") + " " + j.get("education",""))
-        for cat, kw in cls.items():
-            kw_str = ",".join(kw)
-            req = (j.get("requirements","") or "")[:500]
-            sql = f"""INSERT INTO job_requirements 
-(collected_date,title,company,salary,experience,education,requirement_category,requirement_text,source_url)
-VALUES ('{TODAY}','{_e(j['title'])}','{_e(j['company'])}','{_e(j['salary'])}',
-'{_e(j['experience'])}','{_e(j['education'])}','{_e(cat)}',
-'{_e(kw_str+' | '+req[:200])}','{_e(j['source'])}');"""
-            subprocess.run(
-                f'mysql -h {cfg["db_host"]} -u {cfg["db_user"]} '
-                f'-p\'{cfg["db_password"]}\' {cfg["db_name"]} -e "{sql}" 2>/dev/null',
-                shell=True, capture_output=True)
+    conn = _get_mysql_conn(cfg)
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        for j in jobs:
+            cls = classify(j["title"] + " " + j.get("requirements","") + " " + j.get("experience","") + " " + j.get("education",""))
+            for cat, kw in cls.items():
+                kw_str = ",".join(kw)
+                req = (j.get("requirements","") or "")[:500]
+                cur.execute(
+                    """INSERT INTO job_requirements
+                    (collected_date, title, company, salary, experience, education,
+                     requirement_category, requirement_text, source_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (TODAY, j["title"], j["company"], j["salary"],
+                     j["experience"], j["education"], cat,
+                     kw_str + " | " + req[:200], j["source"])
+                )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def save_summary(jobs, cfg):
     if cfg["no_db"]:
         return
-    subprocess.run(
-        f'mysql -h {cfg["db_host"]} -u {cfg["db_user"]} -p\'{cfg["db_password"]}\' '
-        f'{cfg["db_name"]} -e "DELETE FROM job_requirements WHERE '
-        f"collected_date='{TODAY}' AND requirement_category='__summary__';\" 2>/dev/null",
-        shell=True, capture_output=True)
-    cc = {}
-    for j in jobs:
-        for c in classify(j["title"] + " " + j.get("requirements","")):
-            cc[c] = cc.get(c, 0) + 1
-    for c, n in sorted(cc.items(), key=lambda x: -x[1]):
-        subprocess.run(
-            f'mysql -h {cfg["db_host"]} -u {cfg["db_user"]} -p\'{cfg["db_password"]}\' '
-            f'{cfg["db_name"]} -e "INSERT INTO job_requirements '
-            f"(collected_date,title,company,salary,experience,education,"
-            f"requirement_category,requirement_text,source_url) VALUES "
-            f"('{TODAY}','【汇总】{DATE_STR}','','','','','__summary__',"
-            f"'{_e(f'类别: {c}, 出现: {n}次')}','');\" 2>/dev/null",
-            shell=True, capture_output=True)
+    conn = _get_mysql_conn(cfg)
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM job_requirements WHERE collected_date=%s AND requirement_category=%s",
+            (TODAY, "__summary__")
+        )
+        cc = {}
+        for j in jobs:
+            for c in classify(j["title"] + " " + j.get("requirements","")):
+                cc[c] = cc.get(c, 0) + 1
+        for c, n in sorted(cc.items(), key=lambda x: -x[1]):
+            cur.execute(
+                """INSERT INTO job_requirements
+                (collected_date, title, company, salary, experience, education,
+                 requirement_category, requirement_text, source_url)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (TODAY, "【汇总】" + DATE_STR, "", "", "", "", "__summary__",
+                 f"类别: {c}, 出现: {n}次", "")
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def clean_db(cfg):
     if cfg["no_db"]:
         return
-    subprocess.run(
-        f'mysql -h {cfg["db_host"]} -u {cfg["db_user"]} -p\'{cfg["db_password"]}\' '
-        f'{cfg["db_name"]} -e "DELETE FROM job_requirements WHERE '
-        f"collected_date='{TODAY}';\" 2>/dev/null",
-        shell=True, capture_output=True)
-
-
-def _e(s):
-    if not s: return ""
-    return (s.replace("\\","\\\\\\\\").replace("'","\\'")
-            .replace('"','\\"').replace("\n"," ").replace("\r"," "))
+    conn = _get_mysql_conn(cfg)
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM job_requirements WHERE collected_date=%s", (TODAY,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ============================================================

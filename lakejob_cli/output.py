@@ -4,6 +4,15 @@ import json
 import sys
 from typing import Optional
 
+# Windows 控制台默认 cp936，写入非 ASCII 字符会乱码。强制 stdout/stderr 为 UTF-8。
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError, OSError):
+            pass
+
 
 def ok(command: str, data=None, **kwargs) -> dict:
     envelope = {

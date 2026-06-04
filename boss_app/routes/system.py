@@ -1,7 +1,7 @@
 """系统管理相关 API 路由。
 
 包含浏览器启动/停止、重新登录、心跳保活、监控暂停/恢复、
-健康检查、诊断、状态查询、空闲跳转日志等接口。
+健康检查、诊断、状态查询、空闲跳转日志、定时任务等接口。
 """
 
 import os
@@ -9,9 +9,11 @@ import sys as _sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..core.websocket import ws_manager
 from ..core.monitor import chat_monitor
+from ..core.scheduler import auto_scheduler
 from ..models.application import (
     get_today_application_count,
     get_today_pending_count,
@@ -19,6 +21,7 @@ from ..models.application import (
 from ..models.conversation import list_active_conversations
 from ..models.settings import (
     get_setting,
+    set_setting,
     get_daily_stats,
 )
 from ..core import state
@@ -102,6 +105,9 @@ async def start_automation():
         return {"status": "error", "message": "浏览器启动后页面为空，请重试"}
 
     chat_monitor.start(state.automation, ws_manager)
+    # 如果定时任务已启用，启动调度器
+    if get_setting("auto_schedule_enabled", "false") == "true":
+        auto_scheduler.start(state.automation, ws_manager)
     await ws_manager.broadcast({"type": "system", "event": "started"})
     return {"status": "started"}
 
@@ -109,6 +115,7 @@ async def start_automation():
 @router.post("/api/system/stop")
 async def stop_automation():
     chat_monitor.stop()
+    auto_scheduler.stop()
     if state.automation:
         try:
             await state.automation._save_state()  # 正常关闭时保存登录态
@@ -211,3 +218,50 @@ async def log_idle_redirect(req: dict):
     }
     print(f"[行为日志] 空闲跳转: {log_entry}")
     return {"status": "ok"}
+
+
+# ══════════════════════════════════════
+#  定时任务
+# ══════════════════════════════════════
+
+
+class SchedulerConfig(BaseModel):
+    enabled: bool = False
+    cron: str = "09:00,14:00"
+
+
+@router.post("/api/scheduler/start")
+async def start_scheduler(req: SchedulerConfig):
+    """启用/配置定时任务。"""
+    set_setting("auto_schedule_enabled", "true" if req.enabled else "false")
+    if req.cron:
+        set_setting("auto_schedule_cron", req.cron)
+    if req.enabled and state.automation:
+        auto_scheduler.start(state.automation, ws_manager)
+    return {
+        "status": "ok",
+        "enabled": req.enabled,
+        "cron": req.cron,
+        "running": auto_scheduler.running,
+    }
+
+
+@router.post("/api/scheduler/stop")
+async def stop_scheduler():
+    """停用定时任务。"""
+    set_setting("auto_schedule_enabled", "false")
+    auto_scheduler.stop()
+    return {"status": "ok", "running": False}
+
+
+@router.get("/api/scheduler/status")
+def scheduler_status():
+    """返回定时任务状态。"""
+    return {
+        "enabled": get_setting("auto_schedule_enabled", "false") == "true",
+        "running": auto_scheduler.running,
+        "cron": get_setting("auto_schedule_cron", "09:00,14:00"),
+        "next_run": auto_scheduler.next_run,
+        "last_run": auto_scheduler.last_run,
+        "last_result": auto_scheduler.last_result,
+    }

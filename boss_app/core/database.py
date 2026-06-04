@@ -20,6 +20,7 @@ def get_db() -> sqlite3.Connection:
         _local.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
+        _local.conn.execute("PRAGMA busy_timeout=5000")
         _local.conn.execute("PRAGMA foreign_keys=ON")
     return _local.conn
 
@@ -160,10 +161,70 @@ def init_db():
         db.execute("ALTER TABLE conversations ADD COLUMN dialogue_stage TEXT")
     except sqlite3.OperationalError:
         pass
+    # 岗位打分
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN score INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN score_detail TEXT")
+    except sqlite3.OperationalError:
+        pass
+    # 跟进节奏
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN follow_up_at TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN follow_up_count INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE conversations ADD COLUMN last_follow_up_at TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
+    # 岗位真实性
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN legitimacy TEXT DEFAULT 'unknown'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN legitimacy_signals TEXT")
+    except sqlite3.OperationalError:
+        pass
+    # HR活跃度 & 综合评分
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN hr_activity TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN hr_activity_score INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN composite_score INTEGER")
+    except sqlite3.OperationalError:
+        pass
     # 性能索引
     db.execute("CREATE INDEX IF NOT EXISTS idx_conv_app_id ON conversations(application_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_msg_conv_id ON messages(conversation_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_app_status ON applications(status, deleted_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_app_score ON applications(score) WHERE score IS NOT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_app_composite ON applications(composite_score) WHERE composite_score IS NOT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_app_deleted_at ON applications(deleted_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_conv_hr_name ON conversations(hr_name)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_msg_ai_created ON messages(ai_generated, created_at)")
+    # 自动投递日志
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS auto_apply_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER,
+            composite_score INTEGER,
+            hr_activity_score INTEGER,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            result TEXT
+        );
+    """)
     # 默认设置
     defaults = {
         "greeting_template": "您好！看到贵司在招{job_title}，很感兴趣，希望有机会详细了解一下。",
@@ -179,6 +240,10 @@ def init_db():
         "wechat_id": "",
         "search_keywords": "AI Agent,大模型开发,AI产品经理,RAG开发,大模型应用",
         "default_city": "成都",
+        "auto_apply_enabled": "false",
+        "auto_apply_threshold": "73",
+        "auto_apply_hr_active_required": "true",
+        "filter_inactive_hr": "true",  # 过滤3天以上不活跃的HR岗位
     }
     for k, v in defaults.items():
         db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))

@@ -86,3 +86,41 @@ def get_today_auto_reply_count() -> int:
         .fetchone()
     )
     return row["cnt"] if row else 0
+
+
+def get_stats_range(days: int = 7) -> list:
+    """获取最近 N 天的每日统计数组。"""
+    rows = get_db().execute(
+        """SELECT date, applications_sent, messages_sent, messages_received, auto_replies_sent
+           FROM daily_stats
+           WHERE date >= date('now','localtime',? || ' days')
+           ORDER BY date ASC""",
+        (f"-{days}",),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_funnel_stats() -> dict:
+    """获取转化漏斗数据：pending → applied → replied → interview。"""
+    db = get_db()
+    pending = db.execute(
+        "SELECT COUNT(*) as cnt FROM applications WHERE deleted_at IS NULL AND status='pending'"
+    ).fetchone()["cnt"]
+    applied = db.execute(
+        "SELECT COUNT(*) as cnt FROM applications WHERE deleted_at IS NULL AND status='applied'"
+    ).fetchone()["cnt"]
+    replied = db.execute(
+        "SELECT COUNT(*) as cnt FROM conversations WHERE last_message_from='hr'"
+    ).fetchone()["cnt"]
+    interview = db.execute(
+        "SELECT COUNT(*) as cnt FROM conversations WHERE interest_level='high'"
+    ).fetchone()["cnt"]
+    return {
+        "pending": pending,
+        "applied": applied,
+        "replied": replied,
+        "interview": interview,
+        "apply_rate": round(applied / max(pending + applied, 1) * 100, 1),
+        "reply_rate": round(replied / max(applied, 1) * 100, 1),
+        "interview_rate": round(interview / max(replied, 1) * 100, 1),
+    }

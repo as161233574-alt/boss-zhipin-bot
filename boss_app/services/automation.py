@@ -52,8 +52,13 @@ SELECTORS = {
     "apply_button": [
         'button:has-text("立即沟通")',
         'a:has-text("立即沟通")',
+        'button:has-text("立即投递")',
+        'a:has-text("立即投递")',
+        'button:has-text("投递简历")',
+        'a:has-text("投递简历")',
         '[class*="btn-chat"]',
         '[class*="start-chat"]',
+        '[class*="btn-start"]',
         'span:has-text("立即沟通")',
         'div:has-text("立即沟通")',
     ],
@@ -202,6 +207,30 @@ class BossAutomation(BossScraper):
             pass
         await locator.click()
 
+    async def _dismiss_popups(self):
+        """关闭 BOSS 页面常见的弹窗/遮罩。"""
+        dismiss_selectors = [
+            '.btn-close', '.close-btn', '[class*="close"]',
+            'button:has-text("我知道了")', 'button:has-text("关闭")',
+            'button:has-text("暂不")', 'button:has-text("取消")',
+            '.dialog-close', '.modal-close',
+            'span:has-text("×")', '[class*="icon-close"]',
+        ]
+        for sel in dismiss_selectors:
+            try:
+                btn = self.page.locator(sel).first
+                if await btn.is_visible(timeout=500):
+                    await btn.click()
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
+        # 按 Escape 关闭可能的弹窗
+        try:
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+        except Exception:
+            pass
+
     async def _has_text(self, *texts: str) -> bool:
         """检查页面是否包含任意关键词。"""
         try:
@@ -227,12 +256,18 @@ class BossAutomation(BossScraper):
             if any(kw in body_lower[:500] for kw in ["验证", "滑块", "拼图", "captcha", "verify"]):
                 print("  ⚠️ 安全检查: 检测到验证码")
                 return False
-            if any(kw in body_lower[:500] for kw in ["账号异常", "违规", "限制使用", "冻结"]):
-                print("  ⚠️ 安全检查: 账号异常")
-                return False
-            if any(kw in body_lower[:500] for kw in ["操作太频繁", "稍后再试", "休息一下"]):
-                print("  ⚠️ 安全检查: 操作频率限制")
-                return False
+            # 只在弹窗/对话框中检测账号异常关键词，避免误报
+            try:
+                dialogs = await self.page.locator('[class*="dialog"], [class*="modal"], [class*="popup"], [class*="tip"]').all_inner_texts()
+                dialog_text = " ".join(dialogs).lower()
+                if any(kw in dialog_text for kw in ["账号异常", "违规", "限制使用", "冻结"]):
+                    print("  ⚠️ 安全检查: 账号异常")
+                    return False
+                if any(kw in dialog_text for kw in ["操作太频繁", "稍后再试", "休息一下"]):
+                    print("  ⚠️ 安全检查: 操作频率限制")
+                    return False
+            except Exception:
+                pass
             return True
         except Exception:
             return True
@@ -325,20 +360,77 @@ class BossAutomation(BossScraper):
                     update_application_status(existing["id"], "applied")
                 return {"success": True, "message": "已投递过", "already_applied": True}
 
-            # 查找"立即沟通"按钮
-            apply_btn = await self._find_element(SELECTORS["apply_button"])
+            # 关闭可能的弹窗
+            await self._dismiss_popups()
+
+            # 等待页面关键元素加载
+            try:
+                await self.page.wait_for_selector('button, a.btn, [class*="btn"]', timeout=8000)
+            except Exception:
+                pass
+
+            # 关闭弹窗
+            await self._dismiss_popups()
+
+            # 查找投递按钮
+            apply_btn = await self._find_element(SELECTORS["apply_button"], timeout_ms=8000)
+
             if not apply_btn:
+                # 尝试多种文本匹配
+                for btn_text in ["立即沟通", "立即投递", "投递简历", "发送简历"]:
+                    try:
+                        loc = self.page.locator(f'text="{btn_text}"').first
+                        if await loc.is_visible(timeout=1000):
+                            apply_btn = loc
+                            break
+                    except Exception:
+                        continue
+
+            if not apply_btn:
+                # 尝试滚动页面后再找
+                for scroll_y in [300, 600, 0]:
+                    try:
+                        await self.page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                        await asyncio.sleep(0.5)
+                        await self._dismiss_popups()
+                        apply_btn = await self._find_element(SELECTORS["apply_button"], timeout_ms=3000)
+                        if apply_btn:
+                            break
+                    except Exception:
+                        continue
+
+            if not apply_btn:
+                # 最后用 JavaScript 尝试查找
                 try:
-                    apply_btn = self.page.locator("text=立即沟通").first
-                    if not await apply_btn.is_visible():
-                        apply_btn = None
+                    btn_info = await self.page.evaluate("""() => {
+                        const btns = document.querySelectorAll('button, a, [role="button"]');
+                        for (const b of btns) {
+                            const text = (b.textContent || '').trim();
+                            if (text.includes('立即沟通') || text.includes('立即投递') || text.includes('投递简历')) {
+                                const rect = b.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0) {
+                                    return {found: true, text: text, x: rect.x + rect.width/2, y: rect.y + rect.height/2};
+                                }
+                            }
+                        }
+                        return {found: false};
+                    }""")
+                    if btn_info and btn_info.get("found"):
+                        await self.page.mouse.click(btn_info["x"], btn_info["y"])
+                        apply_btn = True  # 标记已点击
+                        await async_pause(2, 3)
                 except Exception:
-                    apply_btn = None
+                    pass
 
             if not apply_btn:
                 return {"success": False, "message": "未找到投递按钮"}
 
-            await self._safe_click(apply_btn)
+            # 用 force=True 绕过可能的遮罩（如果 apply_btn 是 True，说明已通过 JS 点击）
+            if apply_btn is not True:
+                try:
+                    await apply_btn.click(force=True, timeout=10000)
+                except Exception:
+                    await self._safe_click(apply_btn)
             await async_pause(2, 3)
 
             # 检查限制消息
@@ -712,17 +804,26 @@ class BossAutomation(BossScraper):
             await self.page.keyboard.press("Enter")
             await asyncio.sleep(random.uniform(0.5, 1))
 
-            # 验证：消息区出现了刚发的文本
-            body = await self.page.inner_text("body")
-            check = text[:8] if len(text) >= 8 else text[:4]
-            if check in body:
-                return True
+            # 验证：在右侧聊天消息区域（不是整个页面）查找刚发的消息
+            # 使用 read_visible_messages 读取最新消息，检查是否包含刚发送的内容
+            messages = await self.read_visible_messages()
+            if messages:
+                last_msg = messages[-1]
+                # 检查最后一条消息是否是我们发的，且内容匹配
+                check_text = text[:20] if len(text) >= 20 else text
+                if last_msg.get("sender") == "me" and check_text in last_msg.get("content", ""):
+                    return True
 
-            # 再试一次 Enter
+            # 再试一次 Enter + 二次验证
             try:
                 await self.page.keyboard.press("Enter")
-                await asyncio.sleep(random.uniform(0.3, 0.5))
-                return True
+                await asyncio.sleep(random.uniform(0.5, 1))
+                messages2 = await self.read_visible_messages()
+                if messages2:
+                    last_msg2 = messages2[-1]
+                    check_text = text[:20] if len(text) >= 20 else text
+                    if last_msg2.get("sender") == "me" and check_text in last_msg2.get("content", ""):
+                        return True
             except Exception:
                 pass
 

@@ -177,5 +177,8 @@ class ChatMonitor:
                 )
                 await asyncio.sleep(60)
 
+        # 循环退出后通知前端
+        await ws_manager.broadcast({"type": "monitor_stopped", "reason": "loop_exited"})
+
 
 chat_monitor = ChatMonitor()

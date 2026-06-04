@@ -113,7 +113,6 @@ async def sync_conversation_messages(conv_id: int):
 
     sync_lock = state.browser_sync_lock
     if sync_lock is None:
-        import asyncio
         sync_lock = asyncio.Lock()
     if sync_lock.locked():
         return {

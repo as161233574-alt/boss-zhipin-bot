@@ -5,15 +5,7 @@
 
 from typing import List, Optional
 
-from ..core.database import get_db
-
-
-def _row_to_dict(row) -> Optional[dict]:
-    return dict(row) if row else None
-
-
-def _rows_to_list(rows) -> List[dict]:
-    return [dict(r) for r in rows]
+from ..core.database import get_db, _row_to_dict, _rows_to_list
 
 
 # ══════════════════════════════════════

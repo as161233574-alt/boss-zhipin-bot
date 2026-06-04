@@ -49,33 +49,43 @@ def get_application_by_dedup_key(key: str) -> Optional[dict]:
 def add_application(job: dict) -> int:
     db = get_db()
     dedup_key = compute_dedup_key(job)
-    # 先用 dedup_key 查重
-    if dedup_key:
-        existing = get_application_by_dedup_key(dedup_key)
-        if existing:
-            update_application_from_job(existing["id"], job)
-            return 0
-    # 再用 job_url 查重（兜底）
-    cur = db.execute(
-        """INSERT OR IGNORE INTO applications
-           (job_title, company, salary, job_url, city, experience, education, hr_name, hr_title, description, dedup_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            job.get("title", ""),
-            job.get("company", ""),
-            job.get("salary", ""),
-            job.get("url", ""),
-            job.get("city", ""),
-            job.get("experience", ""),
-            job.get("education", ""),
-            job.get("hr_name", ""),
-            job.get("hr_title", ""),
-            job.get("description", ""),
-            dedup_key,
-        ),
-    )
-    db.commit()
-    return cur.lastrowid if cur.lastrowid else 0
+    try:
+        cur = db.execute(
+            """INSERT INTO applications
+               (job_title, company, salary, job_url, city, experience, education, hr_name, hr_title, description, dedup_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                job.get("title", ""),
+                job.get("company", ""),
+                job.get("salary", ""),
+                job.get("url", ""),
+                job.get("city", ""),
+                job.get("experience", ""),
+                job.get("education", ""),
+                job.get("hr_name", ""),
+                job.get("hr_title", ""),
+                job.get("description", ""),
+                dedup_key,
+            ),
+        )
+        db.commit()
+        return cur.lastrowid if cur.lastrowid else 0
+    except sqlite3.IntegrityError as e:
+        # UNIQUE constraint failed - URL already exists (including soft-deleted records)
+        if "UNIQUE" in str(e) and job.get("url"):
+            url = job["url"]
+            # 查找已存在的记录（包括已软删除的）
+            row = db.execute("SELECT id, deleted_at FROM applications WHERE job_url=?", (url,)).fetchone()
+            if row:
+                aid = row["id"]
+                if row["deleted_at"]:
+                    # 已软删除的记录：恢复并更新
+                    db.execute("UPDATE applications SET deleted_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?", (aid,))
+                update_application_from_job(aid, job)
+                db.commit()
+                return aid
+        # Other error or no URL - re-raise
+        raise
 
 
 def get_application(app_id: int) -> Optional[dict]:
@@ -142,6 +152,7 @@ def list_applications(
     limit: int = 50,
     include_deleted: bool = False,
     unique: bool = True,
+    sort_by: str = "updated_at",
 ) -> List[dict]:
     """查询岗位列表。unique=True 时按 dedup_key 去重，每组返回最新一条。"""
     db = get_db()
@@ -151,6 +162,16 @@ def list_applications(
         conds.append("status=?")
         params.append(status)
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
+
+    # 确定排序字段
+    valid_sort_fields = {"updated_at", "composite_score", "score", "created_at"}
+    if sort_by not in valid_sort_fields:
+        sort_by = "updated_at"
+    # SQLite不支持NULLS LAST，使用CASE WHEN处理NULL值
+    if sort_by in ("composite_score", "score"):
+        sort_expr = f"CASE WHEN a.{sort_by} IS NULL THEN 1 ELSE 0 END, a.{sort_by} DESC"
+    else:
+        sort_expr = f"a.{sort_by} DESC"
 
     if unique:
         # 子查询：按 dedup_key 分组取最新 id，dedup_key 为空的记录各自独立
@@ -165,13 +186,13 @@ def list_applications(
                 SELECT MAX(id) as mid FROM applications {inner_where}
                 GROUP BY CASE WHEN dedup_key IS NULL OR dedup_key='' THEN '_row_'||id ELSE dedup_key END
             ) u ON a.id = u.mid
-            ORDER BY a.updated_at DESC LIMIT ?"""
+            ORDER BY {sort_expr} LIMIT ?"""
         inner_params.append(limit)
         rows = db.execute(sql, inner_params).fetchall()
     else:
         params.append(limit)
         rows = db.execute(
-            f"SELECT * FROM applications {where} ORDER BY updated_at DESC LIMIT ?", params
+            f"SELECT * FROM applications {where} ORDER BY {sort_expr} LIMIT ?", params
         ).fetchall()
 
     return [dict(r) for r in rows]
@@ -197,6 +218,13 @@ def update_application_status(app_id: int, status: str, greeting_text: Optional[
             "UPDATE applications SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (status, app_id),
         )
+    # 投递成功时自动设置跟进提醒（在 commit 之前，保证原子性）
+    if status == "applied":
+        try:
+            from .followup import set_initial_followup
+            set_initial_followup(app_id, status)
+        except Exception as e:
+            print(f"[警告] 设置跟进提醒失败 (app_id={app_id}): {e}")
     db.commit()
 
 
@@ -464,3 +492,109 @@ def reconcile_application_stats() -> int:
     )
     db.commit()
     return row.rowcount if row else 0
+
+
+# ══════════════════════════════════════
+#  评分 & 真实性
+# ══════════════════════════════════════
+
+
+def update_application_score(app_id: int, score: int, detail: dict):
+    """更新岗位评分。"""
+    import json as _json
+    db = get_db()
+    db.execute(
+        "UPDATE applications SET score=?, score_detail=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (score, _json.dumps(detail, ensure_ascii=False), app_id),
+    )
+    db.commit()
+
+
+def update_application_legitimacy(app_id: int, level: str, signals: list):
+    """更新岗位真实性标记。"""
+    import json as _json
+    db = get_db()
+    db.execute(
+        "UPDATE applications SET legitimacy=?, legitimacy_signals=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (level, _json.dumps(signals, ensure_ascii=False), app_id),
+    )
+    db.commit()
+
+
+def get_application_for_scoring(app_id: int) -> Optional[dict]:
+    """获取岗位信息用于评分（包含 deleted_at 的也能查到）。"""
+    row = get_db().execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_all_active_jobs_for_legitimacy() -> List[dict]:
+    """获取所有活跃岗位用于真实性检测（去重后）。"""
+    rows = get_db().execute(
+        """SELECT a.* FROM applications a
+           INNER JOIN (
+               SELECT MAX(id) as mid FROM applications
+               WHERE deleted_at IS NULL
+               GROUP BY CASE WHEN dedup_key IS NULL OR dedup_key='' THEN '_row_'||id ELSE dedup_key END
+           ) u ON a.id = u.mid"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_application_hr_activity(app_id: int, hr_activity_score: int):
+    """更新 HR 活跃度分数。"""
+    db = get_db()
+    db.execute(
+        "UPDATE applications SET hr_activity_score=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (hr_activity_score, app_id),
+    )
+    db.commit()
+
+
+def update_application_composite_score(app_id: int, composite_score: int):
+    """更新综合评分。"""
+    db = get_db()
+    db.execute(
+        "UPDATE applications SET composite_score=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (composite_score, app_id),
+    )
+    db.commit()
+
+
+def get_auto_apply_candidates(threshold: int, hr_active_required: bool = True) -> List[dict]:
+    """查询符合自动投递条件的岗位：综合分>=阈值、未被标记为可疑、未投递过。"""
+    db = get_db()
+    sql = """SELECT a.* FROM applications a
+             WHERE a.deleted_at IS NULL
+               AND a.status = 'pending'
+               AND a.composite_score >= ?
+               AND (a.legitimacy IS NULL OR a.legitimacy != 'suspicious')
+               AND a.score IS NOT NULL AND a.score >= 30
+               AND a.id NOT IN (SELECT application_id FROM auto_apply_log WHERE application_id IS NOT NULL AND result = 'success')"""
+    params: list = [threshold]
+    if hr_active_required:
+        sql += " AND a.hr_activity_score > 0"
+    sql += " ORDER BY a.composite_score DESC"
+    rows = db.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def log_auto_apply(app_id: int, composite_score: int, hr_activity_score: int, result: str):
+    """记录自动投递日志。"""
+    db = get_db()
+    db.execute(
+        "INSERT INTO auto_apply_log (application_id, composite_score, hr_activity_score, result) VALUES (?,?,?,?)",
+        (app_id, composite_score, hr_activity_score, result),
+    )
+    db.commit()
+
+
+def get_auto_apply_logs(limit: int = 50) -> List[dict]:
+    """获取自动投递日志。"""
+    rows = get_db().execute(
+        """SELECT l.*, a.job_title, a.company
+           FROM auto_apply_log l
+           LEFT JOIN applications a ON l.application_id = a.id
+           ORDER BY l.applied_at DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
