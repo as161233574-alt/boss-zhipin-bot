@@ -375,26 +375,26 @@ class BossAutomation(BossScraper):
             body_lower = body.lower()
 
             if await self._login_prompt_visible():
-                print("  ⚠️ 安全检查: 需要重新登录")
+                print("  [!] 安全检查: 需要重新登录")
                 return False
             if any(kw in body_lower[:500] for kw in ["验证", "滑块", "拼图", "captcha", "verify"]):
-                print("  ⚠️ 安全检查: 检测到验证码")
+                print("  [!] 安全检查: 检测到验证码")
                 return False
             # 只在弹窗/对话框中检测账号异常关键词，避免误报
             try:
                 dialogs = await self.page.locator('[class*="dialog"], [class*="modal"], [class*="popup"], [class*="tip"]').all_inner_texts()
                 dialog_text = " ".join(dialogs).lower()
                 if any(kw in dialog_text for kw in ["账号异常", "违规", "限制使用", "冻结"]):
-                    print("  ⚠️ 安全检查: 账号异常")
+                    print("  [!] 安全检查: 账号异常")
                     return False
                 if any(kw in dialog_text for kw in ["操作太频繁", "稍后再试", "休息一下"]):
-                    print("  ⚠️ 安全检查: 操作频率限制")
+                    print("  [!] 安全检查: 操作频率限制")
                     return False
             except Exception:
                 pass
             return True
         except Exception:
-            print("  ⚠️ 安全检查: 页面异常，无法检测")
+            print("  [!] 安全检查: 页面异常，无法检测")
             return False
 
     # ══════════════════════════════════════
@@ -497,10 +497,10 @@ class BossAutomation(BossScraper):
         if job_data:
             is_match, reason = check_job_match(job_data)
             if not is_match:
-                print(f"  ⏭️ 跳过: {reason}")
+                print(f"  [>>] 跳过: {reason}")
                 return {"success": False, "message": reason, "skipped": True}
 
-        print(f"  🚀 投递: {job_url[:60]}...")
+        print(f"  [>] 投递: {job_url[:60]}...")
 
         try:
             await self.page.goto(job_url, wait_until="load", timeout=45000)
@@ -615,9 +615,9 @@ class BossAutomation(BossScraper):
             if chat_input and greeting_text:
                 greeting_sent = await self.send_message(greeting_text)
                 if greeting_sent:
-                    print(f"  ✅ 招呼语已发送")
+                    print(f"  [OK] 招呼语已发送")
                 else:
-                    print(f"  ⚠️ 招呼语发送失败")
+                    print(f"  [!] 招呼语发送失败")
 
             # 记录到 SQLite
             existing = _get_app()
@@ -694,11 +694,11 @@ class BossAutomation(BossScraper):
                 get_or_create_conversation(app_id, hr_name, hr_company, job_title)
 
             increment_daily_stat("applications_sent")
-            print(f"  ✅ 投递成功")
+            print(f"  [OK] 投递成功")
             return {"success": True, "message": "投递成功", "application_id": app_id}
 
         except Exception as e:
-            print(f"  ❌ 投递失败: {e}")
+            print(f"  [FAIL] 投递失败: {e}")
             return {"success": False, "message": str(e)}
 
     async def apply_batch(self, job_urls: List[str], greeting_template: Optional[str] = None) -> List[dict]:
@@ -709,7 +709,7 @@ class BossAutomation(BossScraper):
         for i, url in enumerate(job_urls):
             if i > 0:
                 delay = random.uniform(min_delay, max_delay)
-                print(f"  ⏳ 等待 {delay:.0f}s 后投递下一条...")
+                print(f"  [...] 等待 {delay:.0f}s 后投递下一条...")
                 await asyncio.sleep(delay)
 
             # 获取岗位数据用于匹配检查
@@ -947,7 +947,7 @@ class BossAutomation(BossScraper):
                 return True
             return False
         except Exception as e:
-            print(f"  ⚠️ 打开会话失败 ({hr_name}): {e}")
+            print(f"  [!] 打开会话失败 ({hr_name}): {e}")
             return False
 
     async def send_message(self, text: str, fast: bool = True) -> bool:
@@ -1007,7 +1007,7 @@ class BossAutomation(BossScraper):
 
             return False
         except Exception as e:
-            print(f"  ⚠️ send_message 失败: {e}")
+            print(f"  [!] send_message 失败: {e}")
             return False
 
     async def _get_chat_security_id(self, hr_name: str = "") -> str:
@@ -1070,7 +1070,7 @@ class BossAutomation(BossScraper):
                 if attempt < 2:
                     await async_pause(1, 2)
 
-        print(f"  ⚠️ securityId 获取失败（3次重试），HR: {hr_name}")
+        print(f"  [!] securityId 获取失败（3次重试），HR: {hr_name}")
         return ""
 
     async def _exchange_contact(self, hr_name: str, exchange_type: int, selector_key: str, label: str) -> bool:
@@ -1096,7 +1096,7 @@ class BossAutomation(BossScraper):
             else:
                 btn = await self._find_element(SELECTORS[selector_key], timeout_ms=5000)
                 if not btn:
-                    print(f"  ⚠️ send_{label}: 无法获取 securityId 且未找到按钮")
+                    print(f"  [!] send_{label}: 无法获取 securityId 且未找到按钮")
                     return False
                 await btn.click()
                 print(f"  [换{label}] 已点击换{label}按钮")
@@ -1139,7 +1139,7 @@ class BossAutomation(BossScraper):
             return False
 
         except Exception as e:
-            print(f"  ⚠️ send_{label} 失败: {e}")
+            print(f"  [!] send_{label} 失败: {e}")
             return False
 
     async def send_wechat(self, hr_name: str = "") -> bool:
@@ -1155,7 +1155,7 @@ class BossAutomation(BossScraper):
         try:
             btn = await self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=5000)
             if not btn:
-                print("  ⚠️ send_resume: 未找到发简历按钮")
+                print("  [!] send_resume: 未找到发简历按钮")
                 return False
             await btn.click()
             print("  [发简历] 已点击发简历按钮")
@@ -1173,7 +1173,7 @@ class BossAutomation(BossScraper):
             print("  [发简历] 无弹窗，直接完成")
             return True
         except Exception as e:
-            print(f"  ⚠️ send_resume 失败: {e}")
+            print(f"  [!] send_resume 失败: {e}")
             return False
 
     # ══════════════════════════════════════
@@ -1591,7 +1591,7 @@ class BossAutomation(BossScraper):
                             print(f"  [监控] 回复发送失败!")
                         await asyncio.sleep(random.uniform(5, 15))
                 except Exception as e:
-                    print(f"  ⚠️ AI回复生成失败: {e}")
+                    print(f"  [!] AI回复生成失败: {e}")
             elif unreplied_hr_msg and not auto_reply_enabled:
                 print(f"  [监控] 自动回复已关闭，跳过")
 

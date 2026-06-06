@@ -172,6 +172,28 @@ def init_db():
         );
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_auto_apply_app_id ON auto_apply_log(application_id, result)")
+    # Agent Profile 配置表
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS agent_profiles (
+            name TEXT PRIMARY KEY,
+            profile_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    # 简历优化历史
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS resume_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            resume_hash TEXT NOT NULL,
+            jd_hash TEXT,
+            input_summary TEXT,
+            result_json TEXT NOT NULL,
+            duration_ms INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_resume_hist_action ON resume_history(action, created_at);
+    """)
     # 默认设置
     defaults = {
         "greeting_template": "您好！看到贵司在招{job_title}，很感兴趣，希望有机会详细了解一下。",
@@ -205,3 +227,41 @@ def _row_to_dict(row) -> Optional[dict]:
 def _rows_to_list(rows) -> List[dict]:
     """将 sqlite3.Row 列表转换为字典列表。"""
     return [dict(r) for r in rows]
+
+
+# ── Agent Profile CRUD ──
+
+def get_agent_profile(name: str) -> Optional[dict]:
+    """从数据库读取 Agent Profile（返回 dict，None 表示未自定义）。"""
+    db = get_db()
+    row = db.execute("SELECT profile_json FROM agent_profiles WHERE name=?", (name,)).fetchone()
+    if row:
+        import json
+        return json.loads(row["profile_json"])
+    return None
+
+
+def save_agent_profile(name: str, profile_dict: dict) -> None:
+    """保存 Agent Profile 到数据库。"""
+    import json
+    db = get_db()
+    db.execute(
+        "INSERT OR REPLACE INTO agent_profiles (name, profile_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        (name, json.dumps(profile_dict, ensure_ascii=False)),
+    )
+    db.commit()
+
+
+def delete_agent_profile(name: str) -> None:
+    """删除数据库中的 Agent Profile（恢复默认时使用）。"""
+    db = get_db()
+    db.execute("DELETE FROM agent_profiles WHERE name=?", (name,))
+    db.commit()
+
+
+def get_all_agent_profiles() -> dict:
+    """读取所有自定义 Agent Profile（返回 {name: dict}）。"""
+    import json
+    db = get_db()
+    rows = db.execute("SELECT name, profile_json FROM agent_profiles").fetchall()
+    return {r["name"]: json.loads(r["profile_json"]) for r in rows}

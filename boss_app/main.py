@@ -19,6 +19,7 @@ from .routes.conversations import router as conversations_router
 from .routes.settings import router as settings_router
 from .routes.system import router as system_router
 from .routes.debug import router as debug_router
+from .routes.agents import router as agents_router
 from .core.websocket import ws_manager
 from .core.scheduler import auto_scheduler
 from .core.database import get_db, init_db
@@ -87,6 +88,7 @@ app.include_router(conversations_router)
 app.include_router(settings_router)
 app.include_router(system_router)
 app.include_router(debug_router)
+app.include_router(agents_router)
 
 # 初始化数据库
 init_db()
@@ -163,6 +165,30 @@ async def on_startup():
             print("[启动] 定时调度器已启动")
     except Exception as e:
         print(f"[启动] 调度器启动失败: {e}")
+    # 初始化 Agent 系统
+    try:
+        from .agents import orchestrator, SearchAgent, ScorerAgent, ChatAgent, ApplyAgent, ResumeAgent
+        orchestrator.register(SearchAgent(orchestrator))
+        orchestrator.register(ScorerAgent(orchestrator))
+        orchestrator.register(ChatAgent(orchestrator))
+        orchestrator.register(ApplyAgent(orchestrator))
+        orchestrator.register(ResumeAgent(orchestrator))
+        # 从数据库加载 Agent Profile 覆盖默认值
+        try:
+            from .agents.profiles import AgentProfile
+            from .core.database import get_all_agent_profiles
+            overrides = get_all_agent_profiles()
+            for name, profile_dict in overrides.items():
+                agent = orchestrator.agents.get(name)
+                if agent:
+                    agent.profile = AgentProfile.from_dict(profile_dict)
+                    print(f"  [Profile] {name}: 已加载自定义配置")
+        except Exception as e:
+            print(f"  [Profile] 加载自定义配置失败: {e}")
+        await orchestrator.start_all()
+        print(f"[启动] Agent 系统: {len(orchestrator.agents)} 个 Agent 已就绪")
+    except Exception as e:
+        print(f"[启动] Agent 系统初始化失败: {e}")
     print(f"\n[启动] BOSS直聘自动化控制台: http://127.0.0.1:8010")
     print(f"   API Token: {API_TOKEN[:6]}****")
     print(f"   Token 文件: {API_TOKEN_FILE}")

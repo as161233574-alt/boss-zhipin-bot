@@ -115,7 +115,8 @@ class TestScorerPerformance:
 
         # 模拟 LLM 返回固定 JSON（不走网络）
         fake_response = '{"cv_score": 75, "quality_score": 70, "key_skills": ["Python"], "gap": "x", "advice": "y", "summary": "ok", "quality_notes": "ok"}'
-        with patch("boss_app.services.scorer.llm_chat_deepseek", return_value=fake_response):
+        with patch("boss_app.services.scorer.llm_chat_deepseek", return_value=fake_response), \
+             patch("boss_app.services.scorer.llm_call_with_config", return_value=fake_response):
             # 预热
             score_job_combined("AI开发", "测试", "JD内容", "15-25K", "张三")
 

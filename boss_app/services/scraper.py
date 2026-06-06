@@ -341,19 +341,7 @@ class BossScraper:
         self._ctx = await self._pw.firefox.launch_persistent_context(str(PROFILE_DIR), **kw)
         self._br = None
 
-        # 持久化 profile 自动管理 cookies，不额外 add_cookies 避免冲突
-        if STATE_FILE.exists():
-            try:
-                state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-                cookies = state.get("cookies") or []
-                if cookies:
-                    for c in cookies:
-                        try:
-                            await self._ctx.add_cookies([c])
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+        # persistent context 自动管理 cookies 和登录态，无需手动加载
 
         await self._ctx.add_init_script(ANTI_DETECT)
         self.page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()

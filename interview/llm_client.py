@@ -31,7 +31,7 @@ def _get_client() -> httpx.Client:
     global _llm_client
     if _llm_client is None or _llm_client.is_closed:
         _llm_client = httpx.Client(
-            timeout=60,
+            timeout=180,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
     return _llm_client
@@ -142,7 +142,7 @@ def _call_anthropic(cfg: dict, messages: list, system_prompt: Optional[str], tem
     payload = {
         "model": cfg["model"],
         "messages": clean_messages,
-        "max_tokens": 2048,
+        "max_tokens": 8192,
         "temperature": temperature,
     }
     if system_text:
@@ -152,7 +152,7 @@ def _call_anthropic(cfg: dict, messages: list, system_prompt: Optional[str], tem
     for attempt in range(3):
         try:
             resp = client.post(
-                f"{cfg['base_url']}/messages",
+                f"{cfg['base_url']}/v1/messages",
                 json=payload,
                 headers={
                     "x-api-key": cfg["api_key"],
@@ -219,6 +219,20 @@ def llm_chat_deepseek(messages: list, system_prompt: Optional[str] = None, tempe
         messages = [{"role": "system", "content": system_prompt}] + messages
 
     if _is_anthropic_api(cfg["base_url"]):
+        return _call_anthropic(cfg, messages, system_prompt, temperature)
+    else:
+        return _call_openai_compat(cfg, messages, temperature)
+
+
+def llm_call_with_config(cfg: dict, messages: list, system_prompt: Optional[str] = None, temperature: float = 0.3) -> str:
+    """使用指定配置调用 LLM（Agent Profile 专用）。不从 SQLite 读取，直接使用传入的 cfg。"""
+    if not cfg.get("api_key"):
+        raise RuntimeError("AI API Key未配置")
+
+    if system_prompt:
+        messages = [{"role": "system", "content": system_prompt}] + messages
+
+    if _is_anthropic_api(cfg.get("base_url", "")):
         return _call_anthropic(cfg, messages, system_prompt, temperature)
     else:
         return _call_openai_compat(cfg, messages, temperature)

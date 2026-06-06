@@ -440,7 +440,7 @@ def deduplicate_applications() -> dict:
             f"UPDATE applications SET deleted_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
             dup_ids,
         )
-        _log_delete(db, "deduplicate", len(dup_ids), dup_ids, f"清理重复岗位 {len(dup_ids)} 条")
+        _log_delete(db, "deduplicate", len(dup_ids), ",".join(str(i) for i in dup_ids), f"清理重复岗位 {len(dup_ids)} 条")
         db.commit()
         removed = len(dup_ids)
     # 为缺少 dedup_key 的记录补填（批量 executemany，避免 N+1）

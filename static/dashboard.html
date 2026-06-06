@@ -246,6 +246,8 @@ tr:hover td{background:var(--hover)}
       <a data-tab="applications"><span class="icon">📋</span><span>投递记录</span></a>
       <a data-tab="chat"><span class="icon">💬</span><span>聊天</span><span id="chatBadge" class="nav-badge" style="display:none;"></span></a>
       <a data-tab="wechat"><span class="icon">📱</span><span>微信记录</span></a>
+      <a data-tab="resume"><span class="icon">📄</span><span>简历优化</span></a>
+      <a data-tab="agents"><span class="icon">🤖</span><span>Agent配置</span></a>
       <a data-tab="settings"><span class="icon">⚙</span><span>设置</span></a>
     </nav>
     <div class="sidebar-status">
@@ -322,7 +324,8 @@ tr:hover td{background:var(--hover)}
           <span style="flex:1;"></span>
           <button class="btn btn-sm btn-secondary" onclick="loadTrash()" id="btnTrash">回收站 <span id="trashBadge"></span></button>
           <button class="btn btn-sm btn-secondary" onclick="exportCSV()">导出CSV</button>
-          <button class="btn btn-sm btn-secondary" onclick="batchScoreJobs()">批量评分</button>
+          <button class="btn btn-sm btn-secondary" onclick="batchScoreJobs('unscored')">评分未评</button>
+          <button class="btn btn-sm btn-secondary" onclick="batchScoreJobs('all')">重新评分全部</button>
           <button class="btn btn-sm btn-warning" onclick="deduplicateJobs()" id="btnDedup">清理重复</button>
           <button class="btn btn-sm btn-secondary" onclick="refetchDetails()" id="btnRefetch">补全详情</button>
           <button class="btn btn-sm btn-danger" onclick="confirmClearAll()" id="btnClearAll">清空所有</button>
@@ -331,6 +334,15 @@ tr:hover td{background:var(--hover)}
           已选中 <strong id="batchCount">0</strong> 条
           <button class="btn btn-sm btn-danger" style="margin-left:12px;" onclick="batchDelete()">批量删除</button>
           <button class="btn btn-sm btn-secondary" style="margin-left:6px;" onclick="clearSelection()">取消选择</button>
+        </div>
+        <div id="scoreProgress" style="display:none;padding:8px 12px;margin-bottom:8px;background:var(--surface);border:1px solid var(--accent);border-radius:6px;font-size:13px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span id="scoreProgressText">评分中...</span>
+            <div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+              <div id="scoreProgressBar" style="height:100%;background:var(--accent);border-radius:3px;width:0%;transition:width 0.3s;"></div>
+            </div>
+            <span id="scoreProgressPercent">0%</span>
+          </div>
         </div>
         <div id="applyProgress"></div>
         <div style="overflow-x:auto;">
@@ -391,6 +403,89 @@ tr:hover td{background:var(--hover)}
         <button class="btn btn-sm btn-secondary" onclick="loadWechatExchanges()">刷新</button>
       </div>
       <div id="wechatExchangesList"><div class="empty">暂无微信记录</div></div>
+    </div>
+
+    <!-- Tab 6: Resume -->
+    <div class="tab" id="tab-resume">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <!-- 左侧：输入区 -->
+        <div>
+          <div class="section">
+            <h3>简历文本</h3>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+              <input type="file" id="resumeOptFile" accept=".pdf,.txt,.md" style="flex:1;font-size:12px;">
+              <button class="btn btn-sm btn-primary" onclick="resumeUploadAndParse()">上传解析</button>
+            </div>
+            <textarea id="resumeOptText" placeholder="粘贴简历文本，或上传文件自动解析..." rows="12" style="width:100%;font-size:13px;line-height:1.6;resize:vertical;"></textarea>
+            <div style="display:flex;justify-content:space-between;margin-top:4px;">
+              <span id="resumeOptInfo" style="font-size:11px;color:var(--text-3);"></span>
+              <button class="btn btn-xs btn-secondary" onclick="loadResumeFromSettings()">从设置加载</button>
+            </div>
+          </div>
+          <div class="section">
+            <h3>岗位描述 (JD)</h3>
+            <textarea id="resumeOptJD" placeholder="粘贴目标岗位的 JD..." rows="8" style="width:100%;font-size:13px;line-height:1.6;resize:vertical;"></textarea>
+            <span id="resumeJDInfo" style="font-size:11px;color:var(--text-3);"></span>
+          </div>
+          <div class="section" style="border-bottom:none;">
+            <h3>功能操作</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              <button class="btn btn-primary" onclick="resumeAction('optimize')">简历优化</button>
+              <button class="btn btn-secondary" onclick="resumeAction('analyze_match')">匹配分析</button>
+              <button class="btn btn-secondary" onclick="resumeAction('cover_letter')">求职信</button>
+              <button class="btn btn-secondary" onclick="resumeAction('interview_prep')">面试准备</button>
+              <button class="btn btn-secondary" onclick="resumeAction('skill_gap')">技能差距</button>
+              <!-- compare_jds 需要多个 JD，暂不提供 UI 入口 -->
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+              <button class="btn btn-secondary" onclick="resumeAction('jd_analysis')">JD分析</button>
+              <button class="btn btn-secondary" onclick="resumeAction('materials_audit')">证据审计</button>
+              <button class="btn btn-secondary" onclick="resumeAction('interview_grilling')">压力面试</button>
+              <button class="btn btn-secondary" onclick="resumeAction('answer_cards')">回答卡片</button>
+              <button class="btn btn-secondary" onclick="resumeAction('upgrade_plan')">升级计划</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+              <input type="text" id="resumeSectionName" placeholder="模块名: 工作经历/项目经验/教育背景" style="flex:1;font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);">
+              <button class="btn btn-secondary" onclick="resumeAction('improve_section')">优化模块</button>
+            </div>
+            <div style="margin-top:8px;">
+              <input type="text" id="resumeCompanyName" placeholder="公司名称（求职信用）" style="width:200px;font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);">
+            </div>
+          </div>
+        </div>
+        <!-- 右侧：结果区 -->
+        <div>
+          <div class="section">
+            <h3>操作结果</h3>
+            <div id="resumeResultArea" style="min-height:200px;padding:12px;background:var(--sidebar-bg);border-radius:var(--radius);border:1px solid var(--border);font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:600px;overflow-y:auto;">
+              <div style="color:var(--text-3);text-align:center;padding:40px 0;">选择功能并点击执行，结果将在此显示</div>
+            </div>
+          </div>
+          <div class="section">
+            <h3>统计</h3>
+            <div id="resumeStatsArea" style="font-size:12px;color:var(--text-3);">
+              <div style="display:flex;gap:12px;flex-wrap:wrap;" id="resumeStatsGrid"></div>
+            </div>
+          </div>
+          <div class="section" style="border-bottom:none;">
+            <h3>历史记录 <button class="btn btn-xs btn-secondary" onclick="loadResumeHistory()" style="margin-left:8px;">刷新</button></h3>
+            <div id="resumeHistoryArea" style="max-height:200px;overflow-y:auto;font-size:12px;">
+              <div style="color:var(--text-3);text-align:center;padding:20px 0;">暂无记录</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 6: Agent配置 -->
+    <div class="tab" id="tab-agents">
+      <div class="section">
+        <h3>Agent 配置面板</h3>
+        <p style="font-size:13px;color:var(--text-3);margin-bottom:16px;">每个 Agent 拥有独立的模型、温度、系统提示词配置。修改后实时生效。</p>
+        <div id="agentProfilesContainer" style="display:flex;flex-direction:column;gap:16px;">
+          <div style="text-align:center;padding:40px;color:var(--text-3);">加载中...</div>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 5: Settings -->
@@ -488,10 +583,12 @@ function switchTab(tab){
   activeTab=tab;
   document.querySelectorAll('#sideNav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===tab));
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='tab-'+tab));
-  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'投递记录',chat:'聊天',wechat:'微信记录',settings:'设置'}[tab]||'';
+  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'投递记录',chat:'聊天',wechat:'微信记录',resume:'简历优化',agents:'Agent配置',settings:'设置'}[tab]||'';
   if(tab==='applications')loadApplications();
   if(tab==='chat')loadConversations();
   if(tab==='wechat'){loadWechatExchanges();startWechatAutoRefresh();}else{stopWechatAutoRefresh();}
+  if(tab==='resume'){loadResumeStats();loadResumeHistory();}
+  if(tab==='agents')loadAgentProfiles();
 }
 document.querySelectorAll('#sideNav a').forEach(a=>a.addEventListener('click',()=>switchTab(a.dataset.tab)));
 
@@ -563,7 +660,8 @@ function handleWS(msg){
     case'scheduler_complete':showToast('定时任务完成: 搜索'+msg.searched+' 投递'+msg.applied);refreshStatus();break;
     case'scheduler_skipped':showToast('定时任务跳过: '+msg.reason);break;
     case'followup_done':if(activeTab==='applications')loadFollowups();break;
-    case'score_complete':showToast(msg.count+' 个岗位评分完成');if(activeTab==='search')loadJobs();if(activeTab==='applications')loadApplications(appCurrentStatus);break;
+    case'score_progress':updateScoreProgress(msg);break;
+    case'score_complete':showToast(msg.count+' 个岗位评分完成');hideScoreProgress();if(activeTab==='search')loadJobs();if(activeTab==='applications')loadApplications(appCurrentStatus);break;
     case'auto_apply_complete':showToast('自动投递: '+msg.title+' @ '+msg.company+(msg.success?' 成功':' 失败'));if(activeTab==='search')loadJobs();refreshStatus();break;
     case'auto_apply_batch_complete':showToast('自动投递批次完成: '+msg.applied+'/'+msg.total+' 成功');refreshStatus();break;
   }
@@ -751,7 +849,10 @@ function batchDelete(){let ids=Array.from(window._selectedIds);if(!ids.length)re
 function confirmClearAll(){let input=prompt('此操作将清空所有岗位数据！\n请输入"确认清空"以继续：');if(input!=='确认清空'){if(input!==null)showToast('输入不匹配，操作已取消','warning');return;}showToast('正在清空...','info');fetch('/api/jobs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'确认清空'})}).then(r=>r.json()).then(d=>{showToast('已清空 '+d.deleted+' 条岗位','success');loadApplications('');refreshTrashBadge();}).catch(()=>showToast('清空失败','error'));}
 function deduplicateJobs(){if(!confirm('将按「公司+岗位+城市+薪资」清理重复数据，每组仅保留最早记录。\n是否继续？'))return;safeFetch('/api/jobs/deduplicate',{method:'POST'}).then(d=>{let msg='清理完成！记录:'+d.total+' 重复:'+d.duplicates_found+' 已清理:'+d.duplicates_removed;if(d.duplicates_removed>0){loadApplications(appCurrentStatus);refreshTrashBadge();}showToast(msg,'success');}).catch(e=>{showToast('清理失败: '+e.message,'error');});}
 function refetchDetails(){let btn=document.getElementById('btnRefetch');if(btn){btn.disabled=true;btn.textContent='抓取中...';}safeFetch('/api/jobs/refetch',{method:'POST'}).then(d=>{showToast(d.message||'完成','success');loadApplications(appCurrentStatus);}).catch(e=>{showToast('失败: '+e.message,'error');}).finally(()=>{if(btn){btn.disabled=false;btn.textContent='补全详情';}});}
-function batchScoreJobs(){if(!confirm('确定要批量评分所有未评分岗位？'))return;safeFetch('/api/jobs/batch-score',{method:'POST'}).then(d=>{showToast(d.message||'开始评分','success');}).catch(e=>{showToast('批量评分失败: '+e.message,'error');});}
+function batchScoreJobs(mode){mode=mode||'unscored';let msg=mode==='all'?'确定要重新评分所有岗位？':'确定要评分所有未评分岗位？';if(!confirm(msg))return;safeFetch('/api/jobs/batch-score?mode='+mode,{method:'POST'}).then(d=>{showToast(d.message||'开始评分','success');showScoreProgress();}).catch(e=>{showToast('批量评分失败: '+e.message,'error');});}
+function showScoreProgress(){let el=document.getElementById('scoreProgress');if(el){el.style.display='block';document.getElementById('scoreProgressBar').style.width='0%';document.getElementById('scoreProgressPercent').textContent='0%';document.getElementById('scoreProgressText').textContent='评分中...';}}
+function hideScoreProgress(){setTimeout(()=>{let el=document.getElementById('scoreProgress');if(el)el.style.display='none';},2000);}
+function updateScoreProgress(msg){let el=document.getElementById('scoreProgress');if(!el)return;el.style.display='block';let pct=msg.total>0?Math.round(msg.current/msg.total*100):0;document.getElementById('scoreProgressBar').style.width=pct+'%';document.getElementById('scoreProgressPercent').textContent=pct+'%';if(msg.status==='done'){document.getElementById('scoreProgressText').textContent='评分完成！成功 '+msg.scored+' / 失败 '+msg.failed;}else{document.getElementById('scoreProgressText').textContent='评分中 '+msg.current+'/'+msg.total+' (成功'+msg.scored+' 失败'+msg.failed+')';}}
 function refreshTrashBadge(){fetch('/api/trash/count').then(r=>r.json()).then(d=>{let b=document.getElementById('trashBadge');if(b)b.textContent=d.count>0?('('+d.count+')'):'';}).catch(()=>{});}
 function loadTrash(){fetch('/api/trash').then(r=>r.json()).then(d=>{
   let tbody=document.getElementById('appTableBody'),items=d.trash||[];
@@ -1706,6 +1807,504 @@ function flashChatBadge(){
 // WS断开时才轮询未读数
 setInterval(()=>{if(!ws||ws.readyState!==1)updateChatBadge();},30000);
 updateChatBadge();
+
+// ── 简历优化 Tab ──
+let _resumeRunning = false;
+
+function showToast(msg, type) {
+  let t = document.createElement('div');
+  t.style.cssText = 'position:fixed;top:20px;right:20px;padding:10px 16px;border-radius:8px;font-size:13px;z-index:9999;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.15);transition:opacity .3s;opacity:0;';
+  t.style.background = type === 'error' ? 'var(--red)' : type === 'warning' ? 'var(--orange)' : 'var(--green)';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.style.opacity = '1');
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
+}
+
+async function resumeUploadAndParse() {
+  let fileInput = document.getElementById('resumeOptFile');
+  if (!fileInput.files.length) { showToast('请选择文件', 'warning'); return; }
+  let file = fileInput.files[0];
+  let reader = new FileReader();
+  reader.onload = async function(e) {
+    let content = e.target.result.split(',')[1]; // base64
+    try {
+      let r = await safeFetch('/api/agents/resume/parse', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: content, filename: file.name})
+      });
+      if (r && r.parsed) {
+        document.getElementById('resumeOptText').value = r.parsed.full_text || r.parsed.text || '';
+        showToast('简历解析成功');
+      } else if (r && r.error) {
+        showToast('解析失败: ' + r.error, 'error');
+      }
+    } catch(e) { showToast('解析请求失败: ' + e.message, 'error'); }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function loadResumeFromSettings() {
+  try {
+    let r = await safeFetch('/api/settings');
+    let s = r && r.settings ? r.settings : r || {};
+    if (s.resume_full_text) {
+      document.getElementById('resumeOptText').value = s.resume_full_text;
+      showToast('已从设置加载简历');
+    } else if (s.resume_summary) {
+      document.getElementById('resumeOptText').value = s.resume_summary;
+      showToast('已加载简历摘要（完整简历未设置）', 'warning');
+    } else {
+      showToast('设置中无简历内容', 'warning');
+    }
+  } catch(e) { showToast('加载失败: ' + e.message, 'error'); }
+}
+
+async function resumeAction(action) {
+  if (_resumeRunning) { showToast('请等待当前操作完成', 'warning'); return; }
+  let resumeText = document.getElementById('resumeOptText').value.trim();
+  let jdText = document.getElementById('resumeOptJD').value.trim();
+
+  // jd_analysis 只需要 JD，不需要简历
+  if (action !== 'jd_analysis' && !resumeText) { showToast('请提供简历文本', 'warning'); return; }
+  if (action !== 'improve_section' && action !== 'compare_jds' && action !== 'materials_audit' && action !== 'jd_analysis' && action !== 'upgrade_plan' && !jdText) { showToast('请提供岗位描述 (JD)', 'warning'); return; }
+
+  let body = {resume_text: resumeText, jd_text: jdText};
+  let endpoint = '/api/agents/resume/' + action.replace(/_/g, '-');
+
+  if (action === 'improve_section') {
+    let section = document.getElementById('resumeSectionName').value.trim();
+    if (!section) { showToast('请输入要优化的模块名称', 'warning'); return; }
+    body.section = section;
+  }
+  if (action === 'cover_letter') {
+    body.company = document.getElementById('resumeCompanyName').value.trim() || '';
+  }
+  if (action === 'jd_analysis') {
+    if (!jdText) { showToast('请提供岗位描述 (JD)', 'warning'); return; }
+    body = {jd_text: jdText};
+  }
+  if (action === 'materials_audit') {
+    body = {resume_text: resumeText};
+  }
+  if (action === 'upgrade_plan') {
+    body = {resume_text: resumeText};
+  }
+
+  let resultArea = document.getElementById('resumeResultArea');
+  resultArea.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-3);">正在调用 AI 分析，请稍候...</div>';
+  _resumeRunning = true;
+
+  try {
+    let r = await safeFetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    _resumeRunning = false;
+    if (!r) { resultArea.innerHTML = '<div style="color:var(--red);">请求失败</div>'; return; }
+    if (r.error) { resultArea.innerHTML = '<div style="color:var(--red);">错误: ' + r.error + '</div>'; return; }
+    renderResumeResult(action, r);
+    loadResumeStats();
+    loadResumeHistory();
+  } catch(e) {
+    _resumeRunning = false;
+    resultArea.innerHTML = '<div style="color:var(--red);">请求异常: ' + e.message + '</div>';
+  }
+}
+
+function renderResumeResult(action, data) {
+  let area = document.getElementById('resumeResultArea');
+  let cacheTag = data.from_cache ? ' <span style="color:var(--green);font-size:11px;">[缓存]</span>' : '';
+  let html = '';
+
+  if (action === 'optimize' && data.match_score !== undefined) {
+    html += '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">匹配分数: ' + data.match_score + '/100' + cacheTag + '</div>';
+    if (data.claim_levels) {
+      html += '<div style="display:flex;gap:8px;margin-bottom:8px;">';
+      ['C0','C1','C2','C3'].forEach(cl => {
+        let items = data.claim_levels[cl] || [];
+        let color = cl==='C0'?'#dcfce7':cl==='C1'?'#fef9c3':cl==='C2'?'#fee2e2':'#fecaca';
+        if (items.length) html += '<div style="padding:4px 8px;background:'+color+';border-radius:var(--radius);font-size:12px;">'+cl+': '+items.length+'项</div>';
+      });
+      html += '</div>';
+    }
+    if (data.dangerous_words_found && data.dangerous_words_found.length) {
+      html += '<div style="color:var(--red);margin-bottom:8px;font-size:13px;"><b>危险词汇:</b> ';
+      html += data.dangerous_words_found.map(w => esc(w.word) + '(' + esc(w.action) + ')').join(', ');
+      html += '</div>';
+    }
+    if (data.keyword_analysis) {
+      html += '<div style="margin-bottom:8px;"><b>关键词匹配:</b> ' + (data.keyword_analysis.matched||[]).map(s=>esc(s)).join(', ') + '</div>';
+      if (data.keyword_analysis.missing && data.keyword_analysis.missing.length)
+        html += '<div style="color:var(--orange);margin-bottom:8px;"><b>缺失关键词:</b> ' + data.keyword_analysis.missing.map(s=>esc(s)).join(', ') + '</div>';
+    }
+    if (data.evidence_check) {
+      html += '<div style="margin-bottom:8px;"><b>证据检查:</b></div>';
+      data.evidence_check.forEach(e => {
+        html += '<div style="font-size:12px;padding:3px 0;">' + esc(e.bullet||'') + ' <span class="badge">' + (e.claim_level||'') + '</span> ' + (e.evidence_type||'') + '</div>';
+      });
+    }
+    if (data.optimized_resume) {
+      html += '<div style="margin-top:12px;padding:12px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);font-size:13px;white-space:pre-wrap;">' + esc(data.optimized_resume) + '</div>';
+    }
+    if (data.summary) html += '<div style="margin-top:12px;color:var(--text-2);">' + esc(data.summary) + '</div>';
+  } else if (action === 'analyze_match') {
+    let d = data.analysis || data;
+    let verdictColor = d.fit_verdict==='strong_fit'?'var(--green)':d.fit_verdict==='weak_fit'?'#b45309':d.fit_verdict==='risky_fit'?'var(--orange)':'var(--red)';
+    let verdictLabel = d.fit_verdict==='strong_fit'?'强匹配':d.fit_verdict==='weak_fit'?'弱匹配':d.fit_verdict==='risky_fit'?'有风险':'不推荐';
+    html += '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">匹配度: ' + (d.match_score||0) + '/100' + cacheTag + '</div>';
+    if (d.role_type) html += '<div style="margin-bottom:8px;"><b>角色类型:</b> ' + d.role_type + (d.role_type_confidence ? ' (' + Math.round(d.role_type_confidence*100) + '%)' : '') + '</div>';
+    if (d.fit_verdict) html += '<div style="margin-bottom:8px;padding:6px 12px;background:' + verdictColor + '22;border:1px solid ' + verdictColor + ';border-radius:var(--radius);display:inline-block;font-weight:600;color:' + verdictColor + ';">' + verdictLabel + '</div>';
+    if (d.evidence_distribution) html += '<div style="margin-bottom:8px;color:var(--text-2);"><b>证据分布:</b> C0=' + (d.evidence_distribution.C0||0) + ' C1=' + (d.evidence_distribution.C1||0) + ' C2=' + (d.evidence_distribution.C2||0) + ' C3=' + (d.evidence_distribution.C3||0) + '</div>';
+    if (d.strengths) html += '<div style="color:var(--green);margin-bottom:6px;"><b>优势:</b> ' + d.strengths.map(s=>esc(s)).join(', ') + '</div>';
+    if (d.weaknesses) html += '<div style="color:var(--orange);margin-bottom:6px;"><b>不足:</b> ' + d.weaknesses.map(s=>esc(s)).join(', ') + '</div>';
+    if (d.dangerous_words && d.dangerous_words.length) html += '<div style="color:var(--red);margin-bottom:6px;"><b>危险词汇:</b> ' + d.dangerous_words.map(w=>esc(w.word)+(w.suggestion?' → '+esc(w.suggestion):'')).join(', ') + '</div>';
+    if (d.suggestions) html += '<div><b>建议:</b><ul style="margin:4px 0 0 20px;">' + d.suggestions.map(s=>'<li>'+esc(s)+'</li>').join('') + '</ul></div>';
+  } else if (action === 'cover_letter') {
+    let d = data.cover_letter || data;
+    if (typeof d === 'string') html += '<div style="white-space:pre-wrap;">' + esc(d) + '</div>';
+    else if (d.cover_letter) html += '<div style="white-space:pre-wrap;">' + esc(d.cover_letter) + '</div>';
+    if (d.highlights) html += '<div style="margin-top:12px;"><b>亮点:</b> ' + d.highlights.map(s=>esc(s)).join(' | ') + '</div>';
+    html += cacheTag;
+  } else if (action === 'interview_prep') {
+    let d = data.interview_prep || data;
+    if (d.technical_questions) {
+      html += '<div style="font-weight:600;margin-bottom:8px;">技术题' + cacheTag + '</div>';
+      d.technical_questions.forEach((q,i) => {
+        html += '<div style="padding:8px;margin-bottom:6px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">';
+        html += '<div><b>Q' + (i+1) + ' (' + (q.difficulty||'') + '):</b> ' + esc(q.question||'') + '</div>';
+        if (q.key_points) html += '<div style="color:var(--text-3);font-size:12px;margin-top:4px;">要点: ' + q.key_points.map(s=>esc(s)).join(', ') + '</div>';
+        html += '</div>';
+      });
+    }
+    if (d.behavioral_questions) {
+      html += '<div style="font-weight:600;margin:12px 0 8px;">行为题</div>';
+      d.behavioral_questions.forEach((q,i) => {
+        html += '<div style="padding:8px;margin-bottom:6px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">';
+        html += '<div><b>Q:</b> ' + esc(q.question||'') + '</div>';
+        if (q.good_answer_example) html += '<div style="color:var(--green);font-size:12px;margin-top:4px;">示例: ' + esc(q.good_answer_example) + '</div>';
+        html += '</div>';
+      });
+    }
+  } else if (action === 'skill_gap') {
+    let d = data.skill_gap || data;
+    html += '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">匹配率: ' + (d.match_rate||0) + '%' + cacheTag + '</div>';
+    if (d.matched_skills) html += '<div style="color:var(--green);margin-bottom:6px;"><b>已具备:</b> ' + d.matched_skills.map(s=>esc(s.skill)+'('+esc(s.level)+')').join(', ') + '</div>';
+    if (d.missing_skills) {
+      html += '<div style="color:var(--orange);margin-bottom:6px;"><b>需学习:</b></div>';
+      d.missing_skills.forEach(s => {
+        html += '<div style="padding:4px 0;font-size:13px;">' + s.skill + ' - ' + (s.importance||'') + ' - 预计' + (s.learn_time||'') + '</div>';
+      });
+    }
+    if (d.learning_roadmap) {
+      html += '<div style="margin-top:12px;"><b>学习路线:</b></div>';
+      d.learning_roadmap.forEach(r => {
+        html += '<div style="padding:4px 0;font-size:13px;">' + r.priority + '. ' + r.skill + ': ' + r.action + '</div>';
+      });
+    }
+  } else if (action === 'improve_section') {
+    let d = data.section_improvement || data;
+    if (d.original) html += '<div style="margin-bottom:8px;"><b>原文:</b><div style="padding:8px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);font-size:13px;white-space:pre-wrap;">' + esc(d.original) + '</div></div>';
+    if (d.improved) html += '<div style="margin-bottom:8px;"><b>优化后:</b><div style="padding:8px;background:#f0fdf4;border-radius:var(--radius);border:1px solid #bbf7d0;font-size:13px;white-space:pre-wrap;">' + esc(d.improved) + '</div></div>';
+    if (d.changes) html += '<div><b>改动说明:</b><ul style="margin:4px 0 0 20px;">' + d.changes.map(c=>'<li>'+esc(typeof c==='string'?c:c.before+' → '+c.after)+'</li>').join('') + '</ul></div>';
+    if (d.evidence_gaps) html += '<div style="margin-top:8px;color:var(--orange);"><b>需补充证据:</b> ' + d.evidence_gaps.map(s=>esc(s)).join(', ') + '</div>';
+    html += cacheTag;
+  } else if (action === 'jd_analysis') {
+    let d = data;
+    html += '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">角色类型: ' + (d.role_type||'未知') + ' <span style="font-size:13px;color:var(--text-3);">(' + Math.round((d.role_type_confidence||0)*100) + '% 置信度)</span>' + cacheTag + '</div>';
+    if (d.role_type_evidence) html += '<div style="margin-bottom:8px;color:var(--text-2);"><b>判定依据:</b> ' + d.role_type_evidence.map(s=>esc(s)).join(', ') + '</div>';
+    if (d.hard_requirements) {
+      html += '<div style="margin-top:8px;"><b>硬性要求:</b></div>';
+      d.hard_requirements.forEach(r => { html += '<div style="padding:3px 0;font-size:13px;">' + r.item + ' <span class="badge">' + r.importance + '</span></div>'; });
+    }
+    if (d.soft_requirements) {
+      html += '<div style="margin-top:8px;"><b>软性要求:</b></div>';
+      d.soft_requirements.forEach(r => { html += '<div style="padding:3px 0;font-size:13px;">' + r.item + ' <span class="badge">' + r.importance + '</span></div>'; });
+    }
+    if (d.hidden_signals) html += '<div style="margin-top:8px;color:var(--purple);"><b>隐含需求:</b> ' + d.hidden_signals.map(s=>esc(s)).join(', ') + '</div>';
+    if (d.team_stage) html += '<div style="margin-top:8px;"><b>团队阶段:</b> ' + d.team_stage + '</div>';
+    if (d.salary_analysis) html += '<div style="margin-top:8px;"><b>薪资:</b> ' + (d.salary_analysis.range||'') + ' (' + (d.salary_analysis.competitiveness||'') + ')</div>';
+    if (d.resume_focus) html += '<div style="margin-top:8px;"><b>简历应突出:</b><ul style="margin:4px 0 0 20px;">' + d.resume_focus.map(s=>'<li>'+esc(s)+'</li>').join('') + '</ul></div>';
+    if (d.interview_focus) html += '<div style="margin-top:8px;"><b>面试重点:</b><ul style="margin:4px 0 0 20px;">' + d.interview_focus.map(s=>'<li>'+esc(s)+'</li>').join('') + '</ul></div>';
+  } else if (action === 'materials_audit') {
+    let d = data;
+    html += '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">信任分: ' + (d.overall_trust_score||0) + '/100' + cacheTag + '</div>';
+    if (d.summary) {
+      html += '<div style="display:flex;gap:12px;margin-bottom:12px;">';
+      html += '<div style="padding:8px 16px;background:#dcfce7;border-radius:var(--radius);text-align:center;"><div style="font-size:20px;font-weight:600;">' + (d.summary.strong_count||0) + '</div><div style="font-size:11px;">强证据</div></div>';
+      html += '<div style="padding:8px 16px;background:#fef9c3;border-radius:var(--radius);text-align:center;"><div style="font-size:20px;font-weight:600;">' + (d.summary.medium_count||0) + '</div><div style="font-size:11px;">中等</div></div>';
+      html += '<div style="padding:8px 16px;background:#fee2e2;border-radius:var(--radius);text-align:center;"><div style="font-size:20px;font-weight:600;">' + (d.summary.weak_count||0) + '</div><div style="font-size:11px;">弱证据</div></div>';
+      html += '<div style="padding:8px 16px;background:#fecaca;border-radius:var(--radius);text-align:center;"><div style="font-size:20px;font-weight:600;">' + (d.summary.missing_count||0) + '</div><div style="font-size:11px;">无证据</div></div>';
+      html += '</div>';
+      if (d.summary.top_risks) html += '<div style="color:var(--red);margin-bottom:8px;"><b>风险点:</b><ul style="margin:4px 0 0 20px;">' + d.summary.top_risks.map(r=>'<li>'+esc(r)+'</li>').join('') + '</ul></div>';
+    }
+    if (d.audit_results) {
+      d.audit_results.forEach(r => {
+        let color = r.evidence_level==='strong'?'#dcfce7':r.evidence_level==='medium'?'#fef9c3':r.evidence_level==='weak'?'#fee2e2':'#fecaca';
+        html += '<div style="padding:8px;margin-bottom:6px;background:'+color+';border-radius:var(--radius);font-size:13px;">';
+        html += '<div>' + esc(r.item||'') + '</div>';
+        html += '<div style="font-size:11px;color:var(--text-3);">等级: ' + (r.evidence_level||'') + ' | 声明: ' + (r.claim_level||'') + '</div>';
+        if (r.suggestion) html += '<div style="font-size:12px;margin-top:4px;">' + esc(r.suggestion) + '</div>';
+        html += '</div>';
+      });
+    }
+    if (d.improvement_priority) {
+      html += '<div style="margin-top:12px;"><b>改进优先级:</b></div>';
+      d.improvement_priority.forEach(p => {
+        html += '<div style="padding:3px 0;font-size:13px;">' + esc(p.item||'') + ': ' + (p.current_level||'') + ' → ' + (p.target_level||'') + ' — ' + esc(p.action||'') + '</div>';
+      });
+    }
+  } else if (action === 'interview_grilling') {
+    let d = data;
+    if (d.rounds) {
+      d.rounds.forEach(r => {
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="font-weight:600;font-size:14px;margin-bottom:6px;">第' + r.round + '轮: ' + esc(r.theme||'') + '</div>';
+        (r.questions||[]).forEach(q => {
+          html += '<div style="padding:8px;margin-bottom:6px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);font-size:13px;">';
+          html += '<div><b>Q:</b> ' + esc(q.question||'') + '</div>';
+          if (q.target) html += '<div style="color:var(--text-3);font-size:12px;margin-top:4px;">目标: ' + esc(q.target) + '</div>';
+          if (q.good_answer_signal) html += '<div style="color:var(--green);font-size:12px;">好信号: ' + esc(q.good_answer_signal) + '</div>';
+          if (q.bad_answer_signal) html += '<div style="color:var(--red);font-size:12px;">差信号: ' + esc(q.bad_answer_signal) + '</div>';
+          if (q.follow_up) html += '<div style="color:var(--orange);font-size:12px;">追问: ' + esc(q.follow_up) + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+    }
+    if (d.risk_summary) {
+      let rs = d.risk_summary;
+      html += '<div style="margin-top:12px;padding:12px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">';
+      html += '<div style="font-weight:600;margin-bottom:8px;">风险总结</div>';
+      if (rs.strengths) html += '<div style="color:var(--green);margin-bottom:4px;"><b>优势:</b> ' + rs.strengths.map(s=>esc(s)).join(', ') + '</div>';
+      if (rs.risks) html += '<div style="color:var(--orange);margin-bottom:4px;"><b>风险:</b> ' + rs.risks.map(s=>esc(s)).join(', ') + '</div>';
+      if (rs.red_flags) html += '<div style="color:var(--red);margin-bottom:4px;"><b>红旗:</b> ' + rs.red_flags.map(s=>esc(s)).join(', ') + '</div>';
+      if (rs.overall_assessment) html += '<div style="margin-top:8px;">' + esc(rs.overall_assessment) + '</div>';
+      if (rs.hire_recommendation) html += '<div style="margin-top:8px;font-weight:600;">建议: ' + rs.hire_recommendation + '</div>';
+      html += '</div>';
+    }
+    html += cacheTag;
+  } else if (action === 'answer_cards') {
+    let d = data;
+    if (d.cards) {
+      d.cards.forEach((card, idx) => {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-weight:600;margin-bottom:8px;">Q' + (idx+1) + ': ' + esc(card.question||'') + '</div>';
+        if (card.dangerous) {
+          html += '<div style="padding:8px;margin-bottom:4px;background:#fee2e2;border-radius:var(--radius);border:1px solid #fecaca;font-size:13px;">';
+          html += '<div style="color:var(--red);font-weight:600;font-size:11px;">危险回答</div>';
+          html += '<div>' + esc(card.dangerous.answer||'') + '</div>';
+          if (card.dangerous.problems) html += '<div style="font-size:11px;color:var(--red);margin-top:4px;">问题: ' + card.dangerous.problems.map(s=>esc(s)).join(', ') + '</div>';
+          if (card.dangerous.what_interviewer_thinks) html += '<div style="font-size:11px;color:var(--text-3);">面试官想: ' + esc(card.dangerous.what_interviewer_thinks) + '</div>';
+          html += '</div>';
+        }
+        if (card.passable) {
+          html += '<div style="padding:8px;margin-bottom:4px;background:#fef9c3;border-radius:var(--radius);border:1px solid #fde68a;font-size:13px;">';
+          html += '<div style="color:#b45309;font-weight:600;font-size:11px;">及格回答</div>';
+          html += '<div>' + esc(card.passable.answer||'') + '</div>';
+          if (card.passable.improvements) html += '<div style="font-size:11px;color:#b45309;margin-top:4px;">可改进: ' + card.passable.improvements.map(s=>esc(s)).join(', ') + '</div>';
+          html += '</div>';
+        }
+        if (card.strong) {
+          html += '<div style="padding:8px;margin-bottom:4px;background:#dcfce7;border-radius:var(--radius);border:1px solid #bbf7d0;font-size:13px;">';
+          html += '<div style="color:var(--green);font-weight:600;font-size:11px;">优秀回答</div>';
+          html += '<div>' + esc(card.strong.answer||'') + '</div>';
+          if (card.strong.why_effective) html += '<div style="font-size:11px;color:var(--green);margin-top:4px;">为什么有效: ' + card.strong.why_effective.map(s=>esc(s)).join(', ') + '</div>';
+          html += '</div>';
+        }
+        html += '</div>';
+      });
+    }
+    html += cacheTag;
+  } else if (action === 'upgrade_plan') {
+    let d = data;
+    html += '<div style="margin-bottom:12px;"><b>当前信任分:</b> ' + (d.current_trust_score||0) + ' → <b>目标:</b> ' + (d.target_trust_score||0) + cacheTag + '</div>';
+    if (d.quick_wins) {
+      html += '<div style="padding:12px;background:#dcfce7;border-radius:var(--radius);border:1px solid #bbf7d0;margin-bottom:12px;">';
+      html += '<div style="font-weight:600;margin-bottom:6px;">快速提升</div>';
+      d.quick_wins.forEach(w => { html += '<div style="font-size:13px;">' + esc(w) + '</div>'; });
+      html += '</div>';
+    }
+    if (d.upgrade_plan) {
+      let labels = {'1_week':'1周内','1_month':'1个月内','3_months':'3个月内','6_months':'6个月内'};
+      let colors = {'1_week':'#dcfce7','1_month':'#fef9c3','3_months':'#e0e7ff','6_months':'#f3e8ff'};
+      Object.entries(d.upgrade_plan).forEach(([period, tasks]) => {
+        if (!tasks || !tasks.length) return;
+        html += '<div style="margin-bottom:8px;"><b>' + (labels[period]||period) + ':</b></div>';
+        tasks.forEach(t => {
+          html += '<div style="padding:6px 8px;margin-bottom:4px;background:' + (colors[period]||'var(--surface)') + ';border-radius:var(--radius);font-size:13px;">';
+          html += '<div>' + esc(t.task||'') + '</div>';
+          html += '<div style="font-size:11px;color:var(--text-3);">产出: ' + esc(t.output||'') + ' | 证据: ' + (t.evidence_type||'') + ' | 工作量: ' + (t.effort||'') + '</div>';
+          html += '</div>';
+        });
+      });
+    }
+    if (d.priority_order) html += '<div style="margin-top:12px;"><b>优先顺序:</b><ol style="margin:4px 0 0 20px;">' + d.priority_order.map(p=>'<li>'+esc(p)+'</li>').join('') + '</ol></div>';
+  } else {
+    html = '<div style="white-space:pre-wrap;">' + esc(JSON.stringify(data, null, 2)) + '</div>';
+  }
+  area.innerHTML = html;
+}
+
+// esc 已合并到 esc() (line 1116)
+
+async function loadResumeStats() {
+  try {
+    let r = await safeFetch('/api/agents/resume/stats');
+    if (!r) return;
+    let grid = document.getElementById('resumeStatsGrid');
+    let stats = r.runtime_stats || {};
+    let dbStats = r.db_stats || {};
+    let html = '';
+    let actions = ['optimize', 'analyze_match', 'cover_letter', 'interview_prep', 'skill_gap', 'compare_jds', 'improve_section', 'jd_analysis', 'materials_audit', 'interview_grilling', 'answer_cards', 'upgrade_plan'];
+    actions.forEach(a => {
+      let s = stats[a] || {};
+      let db = dbStats[a] || {};
+      let count = s.call_count || db.total_count || 0;
+      let avgMs = s.avg_duration_ms || db.avg_ms || 0;
+      let errors = s.error_count || 0;
+      html += '<div style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);min-width:100px;text-align:center;">';
+      html += '<div style="font-size:11px;color:var(--text-3);text-transform:uppercase;">' + a.replace('_','-') + '</div>';
+      html += '<div style="font-size:18px;font-weight:600;">' + count + '</div>';
+      if (avgMs > 0) html += '<div style="font-size:10px;color:var(--text-3);">' + Math.round(avgMs/1000) + 's avg</div>';
+      if (errors > 0) html += '<div style="font-size:10px;color:var(--red);">' + errors + ' err</div>';
+      html += '</div>';
+    });
+    html += '<div style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);min-width:80px;text-align:center;">';
+    html += '<div style="font-size:11px;color:var(--text-3);text-transform:uppercase;">缓存</div>';
+    html += '<div style="font-size:18px;font-weight:600;">' + (r.cache_size || 0) + '</div>';
+    html += '</div>';
+    grid.innerHTML = html;
+  } catch(e) {}
+}
+
+async function loadResumeHistory() {
+  try {
+    let r = await safeFetch('/api/agents/resume/history?limit=20');
+    if (!r || !r.history) return;
+    let area = document.getElementById('resumeHistoryArea');
+    if (!r.history.length) { area.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:20px 0;">暂无记录</div>'; return; }
+    let html = '<table style="font-size:12px;"><tr><th>时间</th><th>操作</th><th>输入</th><th>耗时</th></tr>';
+    r.history.forEach(h => {
+      let dt = h.created_at ? h.created_at.replace('T',' ').slice(0,16) : '-';
+      let ms = h.duration_ms ? (h.duration_ms > 1000 ? (h.duration_ms/1000).toFixed(1)+'s' : h.duration_ms+'ms') : '-';
+      html += '<tr><td>'+dt+'</td><td><span class="badge">'+h.action+'</span></td><td>'+(h.input_summary||'-')+'</td><td>'+ms+'</td></tr>';
+    });
+    html += '</table>';
+    area.innerHTML = html;
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════
+//  Agent Profile 管理
+// ══════════════════════════════════════════
+
+async function loadAgentProfiles() {
+  const container = document.getElementById('agentProfilesContainer');
+  try {
+    const data = await safeFetch('/api/agents/profiles');
+    if (!data || !data.profiles) { container.innerHTML = '<div style="color:var(--text-3)">加载失败</div>'; return; }
+    const profiles = data.profiles;
+    let html = '';
+    for (const [name, p] of Object.entries(profiles)) {
+      html += renderAgentCard(name, p);
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = '<div style="color:var(--red)">加载失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderAgentCard(name, p) {
+  const tools = (p.tools || []).map(t => '<span class="badge" style="margin:2px;">'+esc(t)+'</span>').join('');
+  return `
+  <div class="section" style="border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:0;" id="agent-card-${name}">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">${name==='search'?'🔍':name==='scorer'?'📊':name==='chat'?'💬':name==='apply'?'🚀':'📄'}</span>
+        <div>
+          <div style="font-weight:590;font-size:15px;">${esc(p.display_name)}</div>
+          <div style="font-size:12px;color:var(--text-3);">${esc(p.description)}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <label style="font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" ${p.enabled?'checked':''} onchange="toggleAgentEnabled('${name}',this.checked)" style="cursor:pointer;"> 启用
+        </label>
+        <button class="btn btn-xs btn-secondary" onclick="resetAgentProfile('${name}')">恢复默认</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div>
+        <label style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;">模型</label>
+        <input type="text" value="${esc(p.model||'')}" placeholder="(全局默认)"
+          onchange="updateAgentField('${name}','model',this.value)"
+          style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);margin-top:4px;">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;">温度 (${p.temperature})</label>
+        <input type="range" min="0" max="1" step="0.1" value="${p.temperature}"
+          oninput="this.previousElementSibling.textContent='温度 ('+this.value+')';updateAgentField('${name}','temperature',parseFloat(this.value))"
+          style="width:100%;margin-top:8px;">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;">Max Tokens</label>
+        <input type="number" value="${p.max_tokens}" min="64" max="16384"
+          onchange="updateAgentField('${name}','max_tokens',parseInt(this.value))"
+          style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);margin-top:4px;">
+      </div>
+    </div>
+    <div style="margin-bottom:8px;">
+      <label style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;">工具列表</label>
+      <div style="margin-top:4px;">${tools || '<span style="color:var(--text-3);font-size:12px;">无</span>'}</div>
+    </div>
+    <details style="margin-top:8px;">
+      <summary style="font-size:12px;color:var(--text-3);cursor:pointer;user-select:none;">编辑系统提示词 (${(p.system_prompt||'').length} 字)</summary>
+      <textarea id="prompt-${name}" style="width:100%;min-height:200px;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:monospace;background:var(--surface);resize:vertical;">${esc(p.system_prompt||'')}</textarea>
+      <div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end;">
+        <button class="btn btn-xs btn-primary" onclick="saveAgentPrompt('${name}')">保存提示词</button>
+      </div>
+    </details>
+  </div>`;
+}
+
+async function updateAgentField(name, field, value) {
+  try {
+    const body = {};
+    body[field] = value;
+    await safeFetch('/api/agents/profiles/' + name, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    showToast(name + '.' + field + ' 已更新', 'success');
+  } catch(e) {
+    showToast('更新失败: ' + e.message, 'error');
+  }
+}
+
+async function toggleAgentEnabled(name, enabled) {
+  await updateAgentField(name, 'enabled', enabled);
+}
+
+async function saveAgentPrompt(name) {
+  const textarea = document.getElementById('prompt-' + name);
+  if (!textarea) return;
+  await updateAgentField(name, 'system_prompt', textarea.value);
+}
+
+async function resetAgentProfile(name) {
+  if (!confirm('确定将 ' + name + ' Agent 恢复为默认配置？')) return;
+  try {
+    await safeFetch('/api/agents/profiles/' + name + '/reset', {method: 'POST'});
+    showToast(name + ' 已恢复默认', 'success');
+    loadAgentProfiles();
+  } catch(e) {
+    showToast('恢复失败: ' + e.message, 'error');
+  }
+}
 </script>
 </body>
 </html>

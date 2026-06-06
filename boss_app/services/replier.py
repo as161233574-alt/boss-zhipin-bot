@@ -12,7 +12,7 @@ from pathlib import Path
 # 复用 interview/llm_client.py（项目根目录下的 interview 目录）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT / "interview"))
-from llm_client import llm_chat_deepseek
+from llm_client import llm_chat_deepseek, llm_call_with_config
 
 from ..models.message import get_recent_messages
 from ..models.settings import get_setting
@@ -164,6 +164,7 @@ def generate_reply(
     style: str = "professional",
     resume_summary: str = "",
     wechat_id: str = "",
+    cfg: dict = None,
 ) -> tuple:
     """
     根据 HR 消息生成 AI 回复、兴趣度、情感和对话阶段评估。
@@ -203,7 +204,10 @@ def generate_reply(
             {"role": "user", "content": context},
         ]
 
-        raw = llm_chat_deepseek(messages, system_prompt=system_text, temperature=0.7)
+        if cfg:
+            raw = llm_call_with_config(cfg, messages, system_prompt=system_text, temperature=0.7)
+        else:
+            raw = llm_chat_deepseek(messages, system_prompt=system_text, temperature=0.7)
         raw = raw.strip().strip('"').strip("'").strip()
 
         reply = ""

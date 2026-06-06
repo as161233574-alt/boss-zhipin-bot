@@ -14,7 +14,7 @@ _interview_dir = str(Path(__file__).resolve().parent.parent.parent / "interview"
 if _interview_dir not in sys.path:
     sys.path.insert(0, _interview_dir)
 
-from llm_client import llm_chat_deepseek, _load_ai_config
+from llm_client import llm_chat_deepseek, llm_call_with_config, _load_ai_config
 
 
 def _strip_code_fence(text: str) -> str:
@@ -42,12 +42,14 @@ def score_job(
     description: str,
     salary: str,
     resume_summary: str = "",
+    cfg: dict = None,
 ) -> dict:
     """对岗位进行多维度评分，返回 {"score": 85, "key_skills": [...], "gap": "...", "advice": "..."}。
 
     有简历时做 CV 匹配加权评分；无简历时只评估客观维度。
     """
-    cfg = _load_ai_config()
+    if cfg is None:
+        cfg = _load_ai_config()
     if not cfg.get("api_key") or len(cfg["api_key"]) < 10:
         return {"score": None, "key_skills": [], "gap": "", "advice": "", "summary": "AI未配置", "has_resume": False}
 
@@ -65,20 +67,21 @@ def score_job(
 - 薪资: {salary}
 - JD: {description[:2000]}
 
-## 评分规则（严格）
-**核心原则：简历中的技能/经验与岗位要求不匹配时，必须给低分（<50分）。**
+## 评分规则（合理评估）
+**核心原则：根据简历与岗位的整体匹配度进行综合评估，给分要合理、有区分度。**
 
-1. 技能匹配度 (40%): 简历中的核心技术栈与岗位要求的重合度。重合度低→低分。
-2. 经验匹配度 (20%): 简历经验与岗位要求是否吻合。岗位要求的经验领域与简历不符→低分。
+1. 技能匹配度 (40%): 简历中的核心技术栈与岗位要求的重合度。有3个以上共同技能→高分。
+2. 经验匹配度 (20%): 简历经验与岗位要求是否吻合。相关领域经验→加分。
 3. 薪资合理性 (15%): 薪资范围是否透明、合理
 4. 公司信息 (10%): 公司是否有足够信息
 5. 发展前景 (10%): 行业/技术方向前景
 6. 其他因素 (5%): 工作地点、远程可能性等
 
 ## 关键判定
-- 如果岗位的核心职责与简历技能领域不匹配（如简历写Linux运维，岗位是前端开发），直接给 20-40 分
-- 如果岗位只是部分匹配（如简历写Linux/Docker，岗位提到了Linux但主要是网络运维），给 40-60 分
-- 只有岗位核心职责与简历高度匹配时才给 70 分以上
+- 如果岗位的核心职责与简历技能领域完全不匹配（如简历写前端开发，岗位是硬件工程师），给 20-40 分
+- 如果岗位与简历有部分匹配（有2-3个共同技能），给 50-65 分
+- 如果岗位与简历匹配度较好（有3-5个共同技能），给 65-80 分
+- 如果岗位与简历高度匹配（核心技能高度重合），给 80-95 分
 
 ## 输出格式（严格JSON）
 {{
@@ -115,11 +118,12 @@ def score_job(
 
     raw = ""
     try:
-        raw = llm_chat_deepseek(
-            [{"role": "user", "content": prompt}],
-            system_prompt="你是求职辅导专家。输出严格JSON，不要输出任何其他内容。",
-            temperature=0.3,
-        )
+        _msgs = [{"role": "user", "content": prompt}]
+        _sp = "你是求职辅导专家。输出严格JSON，不要输出任何其他内容。"
+        if cfg:
+            raw = llm_call_with_config(cfg, _msgs, _sp, 0.3)
+        else:
+            raw = llm_chat_deepseek(_msgs, _sp, 0.3)
         result = json.loads(_strip_code_fence(raw))
         result["has_resume"] = has_resume
         # 确保 score 在合理范围
@@ -240,9 +244,11 @@ def score_job_quality(
     description: str,
     salary: str,
     hr_name: str,
+    cfg: dict = None,
 ) -> dict:
     """评估招聘信息质量，返回 {"quality_score": 75, "quality_notes": "..."}。"""
-    cfg = _load_ai_config()
+    if cfg is None:
+        cfg = _load_ai_config()
     if not cfg.get("api_key") or len(cfg["api_key"]) < 10:
         return {"quality_score": None, "quality_notes": "AI未配置"}
 
@@ -267,11 +273,12 @@ def score_job_quality(
 
     raw = ""
     try:
-        raw = llm_chat_deepseek(
-            [{"role": "user", "content": prompt}],
-            system_prompt="你是求职顾问。输出严格JSON，不要输出任何其他内容。",
-            temperature=0.3,
-        )
+        _msgs = [{"role": "user", "content": prompt}]
+        _sp = "你是求职顾问。输出严格JSON，不要输出任何其他内容。"
+        if cfg:
+            raw = llm_call_with_config(cfg, _msgs, _sp, 0.3)
+        else:
+            raw = llm_chat_deepseek(_msgs, _sp, 0.3)
         result = json.loads(_strip_code_fence(raw))
         if result.get("quality_score") is not None:
             result["quality_score"] = max(0, min(100, int(result["quality_score"])))
@@ -324,9 +331,11 @@ def score_job_combined(
     salary: str,
     hr_name: str,
     resume_summary: str = "",
+    cfg: dict = None,
 ) -> dict:
     """一次 LLM 调用同时返回 CV 匹配分和招聘质量分，节省 50% LLM 时间。"""
-    cfg = _load_ai_config()
+    if cfg is None:
+        cfg = _load_ai_config()
     if not cfg.get("api_key") or len(cfg["api_key"]) < 10:
         return {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": "AI未配置", "quality_notes": "AI未配置", "has_resume": False}
 
@@ -351,7 +360,7 @@ def score_job_combined(
 ## 评分任务
 
 ### 任务1: CV匹配度评分 (cv_score, 0-100)
-{'根据简历与岗位的匹配度评分。技能不匹配→低分(<50)，高度匹配→70+。\n评估维度: 技能匹配(40%)、经验匹配(20%)、薪资合理性(15%)、公司信息(10%)、发展前景(10%)、其他(5%)' if has_resume else '无简历，仅评估客观维度：薪资透明度25%、JD质量25%、技能要求合理性20%、公司信息15%、发展前景15%。'}
+{'评分规则（严格）：\n- 核心技能匹配（Python/RAG/LLM/Agent/FastAPI）是决定性因素\n- 仅匹配辅助技能（Docker/MySQL/Linux）而核心技能不匹配 → 最高45分\n- 岗位方向与求职目标不符（如运维/DevOps/前端/硬件）→ 最高35分\n- 核心技能匹配3个以上 → 65-80分\n- 核心技能高度匹配 → 80-95分' if has_resume else '无简历，仅评估客观维度：薪资透明度25%、JD质量25%、技能要求合理性20%、公司信息15%、发展前景15%。'}
 
 ### 任务2: 招聘信息质量评分 (quality_score, 0-100)
 评估JD的完整度和质量。
@@ -377,11 +386,12 @@ def score_job_combined(
 
     raw = ""
     try:
-        raw = llm_chat_deepseek(
-            [{"role": "user", "content": prompt}],
-            system_prompt="你是求职辅导专家。输出严格JSON，不要输出任何其他内容。",
-            temperature=0.3,
-        )
+        _msgs = [{"role": "user", "content": prompt}]
+        _sp = "你是求职辅导专家。输出严格JSON，不要输出任何其他内容。"
+        if cfg:
+            raw = llm_call_with_config(cfg, _msgs, _sp, 0.3)
+        else:
+            raw = llm_chat_deepseek(_msgs, _sp, 0.3)
         result = json.loads(_strip_code_fence(raw))
         result["has_resume"] = has_resume
         if result.get("cv_score") is not None:
@@ -404,3 +414,104 @@ def score_job_combined(
         return {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": raw[:200] if raw else "评分失败", "quality_notes": "解析失败", "has_resume": has_resume}
     except Exception as e:
         return {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": f"评分异常: {str(e)[:100]}", "quality_notes": f"异常: {str(e)[:50]}", "has_resume": has_resume}
+
+
+def score_jobs_batch(
+    jobs: list[dict],
+    resume_summary: str = "",
+    cfg: dict = None,
+) -> list[dict]:
+    """一次 LLM 调用同时评分多个岗位（最多 5 个），返回结果列表。
+
+    每个 job dict 需要包含: id, job_title, company, description, salary, hr_name
+    """
+    if not jobs:
+        return []
+
+    if cfg is None:
+        cfg = _load_ai_config()
+    if not cfg.get("api_key") or len(cfg["api_key"]) < 10:
+        return [{"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": "AI未配置", "quality_notes": "AI未配置", "has_resume": False}] * len(jobs)
+
+    has_resume = bool(resume_summary and len(resume_summary.strip()) > 5)
+
+    resume_section = ""
+    if has_resume:
+        resume_section = f"""
+## 求职者简历摘要
+{resume_summary[:1500]}"""
+
+    # 构建多岗位 prompt
+    jobs_section = ""
+    for i, job in enumerate(jobs, 1):
+        jobs_section += f"""
+### 岗位{i}
+- ID: {job.get('id', i)}
+- 职位: {job.get('job_title', '')}
+- 公司: {job.get('company', '')}
+- 薪资: {job.get('salary', '')}
+- HR: {job.get('hr_name', '') or '无'}
+- JD: {(job.get('description', '') or '')[:800]}
+"""
+
+    prompt = f"""你是求职辅导专家。请对以下 {len(jobs)} 个岗位同时评分，返回严格JSON数组。
+{resume_section}
+
+{jobs_section}
+
+## 评分任务
+对每个岗位进行两项评分：
+1. CV匹配度 (cv_score, 0-100):
+{'评分规则（严格）：\n- 核心技能匹配（Python/RAG/LLM/Agent/FastAPI）是决定性因素，只有核心技能匹配才给高分\n- 仅匹配辅助技能（Docker/MySQL/Linux）而核心技能不匹配 → 最高45分\n- 岗位方向与求职目标不符（如运维/DevOps/前端/硬件）→ 最高35分\n- 核心技能匹配3个以上 → 65-80分\n- 核心技能高度匹配 → 80-95分' if has_resume else '无简历，仅评估客观维度。'}
+2. 招聘信息质量 (quality_score, 0-100): JD详细程度、薪资透明度、公司信息、技术要求合理性、HR可信度
+
+## 输出格式（严格JSON数组，不要输出任何其他内容）
+[
+  {{"id": 1, "cv_score": 75, "quality_score": 70, "key_skills": ["Python", "FastAPI"], "gap": "缺少K8s经验", "advice": "建议强调项目经验", "summary": "匹配度中等", "quality_notes": "JD较详细"}},
+  {{"id": 2, "cv_score": 60, "quality_score": 65, "key_skills": ["Java", "Spring"], "gap": "技术栈不匹配", "advice": "建议投递Java岗位", "summary": "匹配度一般", "quality_notes": "薪资不明确"}}
+]
+
+注意：
+- 返回数组长度必须等于输入岗位数（{len(jobs)} 个）
+- 每个结果必须包含 id 字段，与输入对应
+- key_skills 至少 2 个核心技能
+- gap 和 advice 必须填写"""
+
+    raw = ""
+    try:
+        _msgs = [{"role": "user", "content": prompt}]
+        _sp = "你是求职辅导专家。输出严格JSON数组，不要输出任何其他内容。"
+        if cfg:
+            raw = llm_call_with_config(cfg, _msgs, _sp, 0.3)
+        else:
+            raw = llm_chat_deepseek(_msgs, _sp, 0.3)
+        results = json.loads(_strip_code_fence(raw))
+        if not isinstance(results, list):
+            results = [results]
+        # 按 id 映射结果
+        id_map = {r.get("id"): r for r in results}
+        final = []
+        for job in jobs:
+            r = id_map.get(job.get("id"), {})
+            # 确保字段完整
+            r.setdefault("cv_score", None)
+            r.setdefault("quality_score", None)
+            r.setdefault("key_skills", [])
+            r.setdefault("gap", "待分析")
+            r.setdefault("advice", "建议进一步了解岗位详情")
+            r.setdefault("summary", "评分完成")
+            r.setdefault("quality_notes", "评分完成")
+            r["has_resume"] = has_resume
+            if r["cv_score"] is not None:
+                r["cv_score"] = max(0, min(100, int(r["cv_score"])))
+            if r["quality_score"] is not None:
+                r["quality_score"] = max(0, min(100, int(r["quality_score"])))
+            final.append(r)
+        return final
+    except (json.JSONDecodeError, ValueError):
+        # 解析失败，回退到单个评分
+        fallback = {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": raw[:200] if raw else "批量评分失败", "quality_notes": "解析失败", "has_resume": has_resume}
+        return [fallback] * len(jobs)
+    except Exception as e:
+        fallback = {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": f"评分异常: {str(e)[:100]}", "quality_notes": f"异常: {str(e)[:50]}", "has_resume": has_resume}
+        return [fallback] * len(jobs)

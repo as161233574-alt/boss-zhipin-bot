@@ -878,58 +878,116 @@ async def score_single_job(job_id: int):
 
 
 @router.post("/api/jobs/batch-score")
-async def batch_score_jobs():
-    """批量评分所有未评分岗位（后台执行，不阻塞）。"""
-    from concurrent.futures import ThreadPoolExecutor
+async def batch_score_jobs(mode: str = "unscored"):
+    """批量评分岗位（后台执行，不阻塞）。
+    mode: "unscored" = 仅未评分岗位, "all" = 所有岗位重新评分
+    使用批量 prompt + 5 路并行加速。
+    """
+    from ..services.scorer import score_jobs_batch
     db = get_db()
-    unscored = db.execute(
-        "SELECT id FROM applications WHERE score IS NULL AND deleted_at IS NULL"
-    ).fetchall()
-    if not unscored:
-        return {"message": "没有待评分的岗位", "count": 0}
-    ids = [r["id"] for r in unscored]
+    if mode == "all":
+        rows = db.execute(
+            "SELECT id FROM applications WHERE deleted_at IS NULL"
+        ).fetchall()
+        if not rows:
+            return {"message": "没有岗位可评分", "count": 0}
+    else:
+        rows = db.execute(
+            "SELECT id FROM applications WHERE score IS NULL AND deleted_at IS NULL"
+        ).fetchall()
+        if not rows:
+            return {"message": "没有待评分的岗位", "count": 0}
+    ids = [r["id"] for r in rows]
     resume = get_setting("resume_summary", "")
     all_jobs = get_all_active_jobs_for_legitimacy()
 
-    async def _batch_bg():
-        scored = 0
-        def _score_one(aid):
+    BATCH_SIZE = 5
+    MAX_WORKERS = 5
+
+    def _apply_result(aid, result):
+        """将评分结果写入数据库（必须在主线程调用）。"""
+        cv = result.get("cv_score")
+        if cv is not None:
+            update_application_score(aid, cv, result)
+        else:
+            cv = 30
+        qs = result.get("quality_score") or 40
+        job = get_application_for_scoring(aid)
+        hr_act = job.get("hr_activity", "") if job else ""
+        hr_s = score_hr_activity(hr_act)
+        update_application_hr_activity(aid, hr_s)
+        if job:
+            leg = check_legitimacy(job, all_jobs)
+            update_application_legitimacy(aid, leg["level"], leg["signals"])
+        comp = compute_composite_score(cv, qs, hr_s)
+        update_application_composite_score(aid, comp)
+
+    def _llm_score_batch(batch_ids):
+        """仅做 LLM 评分，不写数据库（可并行）。返回 (jobs, results)。"""
+        batch_jobs = []
+        for aid in batch_ids:
             job = get_application_for_scoring(aid)
-            if not job:
-                return 0
-            try:
-                result = score_job_combined(
-                    job.get("job_title", ""), job.get("company", ""),
-                    job.get("description", ""), job.get("salary", ""),
-                    job.get("hr_name", ""), resume
-                )
-                cv = result.get("cv_score")
-                if cv is not None:
-                    update_application_score(aid, cv, result)
-                else:
-                    cv = 30
-                qs = result.get("quality_score") or 40
-                hr_act = job.get("hr_activity", "")
-                hr_s = score_hr_activity(hr_act)
-                update_application_hr_activity(aid, hr_s)
-                leg = check_legitimacy(job, all_jobs)
-                update_application_legitimacy(aid, leg["level"], leg["signals"])
-                comp = compute_composite_score(cv, qs, hr_s)
-                update_application_composite_score(aid, comp)
-                return 1
-            except Exception as e:
-                print(f"[批量评分] 岗位 {aid} 失败: {e}")
-                return 0
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            results = list(pool.map(_score_one, ids))
-        scored = sum(results)
-        print(f"[批量评分] 完成: {scored}/{len(ids)}")
-        await ws_manager.broadcast({"type": "score_complete", "count": scored})
+            if job:
+                job["id"] = aid
+                batch_jobs.append(job)
+        if not batch_jobs:
+            return [], []
+        results = score_jobs_batch(batch_jobs, resume)
+        return batch_jobs, results
+
+    async def _batch_bg():
+        total = len(ids)
+        scored = 0
+        failed = 0
+        batches = [ids[i:i+BATCH_SIZE] for i in range(0, len(ids), BATCH_SIZE)]
+        await ws_manager.broadcast({"type": "score_progress", "current": 0, "total": total, "scored": 0, "failed": 0, "status": "running"})
+        loop = asyncio.get_running_loop()
+        for batch_group_start in range(0, len(batches), MAX_WORKERS):
+            group = batches[batch_group_start:batch_group_start+MAX_WORKERS]
+            # 并行 LLM 评分（不写数据库）
+            tasks = [loop.run_in_executor(None, _llm_score_batch, b) for b in group]
+            llm_results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 串行写入数据库
+            for r in llm_results:
+                if isinstance(r, Exception):
+                    print(f"[批量评分] LLM批次异常: {r}")
+                    failed += BATCH_SIZE
+                    continue
+                jobs, results = r
+                if not jobs:
+                    continue
+                for job, result in zip(jobs, results):
+                    try:
+                        _apply_result(job["id"], result)
+                        scored += 1
+                    except Exception as e:
+                        print(f"[批量评分] 岗位 {job['id']} 写入失败: {e}")
+                        failed += 1
+            processed = min(batch_group_start + MAX_WORKERS, len(batches)) * BATCH_SIZE
+            processed = min(processed, total)
+            await ws_manager.broadcast({
+                "type": "score_progress",
+                "current": processed,
+                "total": total,
+                "scored": scored,
+                "failed": failed,
+                "status": "running"
+            })
+        print(f"[批量评分] 完成: {scored}/{total}")
+        await ws_manager.broadcast({
+            "type": "score_progress",
+            "current": total,
+            "total": total,
+            "scored": scored,
+            "failed": failed,
+            "status": "done"
+        })
 
     task = asyncio.create_task(_batch_bg())
     state.background_tasks.append(task)
     task.add_done_callback(lambda t: state.background_tasks.remove(t) if t in state.background_tasks else None)
-    return {"message": f"开始批量评分 {len(ids)} 个岗位", "count": len(ids)}
+    label = "重新评分" if mode == "all" else "批量评分"
+    return {"message": f"开始{label} {len(ids)} 个岗位", "count": len(ids)}
 
 
 # ══════════════════════════════════════

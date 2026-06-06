@@ -114,7 +114,7 @@ class TestSearchViaUI:
             city_sel.select_option(label="北京")
             print(f"  [OK] 城市: {city_sel.input_value()}")
         except Exception as e:
-            print(f"  ⚠ 城市选择失败: {e}")
+            print(f"  [!] 城市选择失败: {e}")
 
         # 翻页
         max_pages = page.locator("#maxPages, input[type='number']").first
@@ -137,7 +137,7 @@ class TestSearchViaUI:
         # 确认浏览器已启动
         status = auth_get("/api/status")
         if not status.get("browser_running"):
-            print("  ⚠ 浏览器未启动，先启动")
+            print("  [!] 浏览器未启动，先启动")
             auth_post("/api/system/start")
             time.sleep(5)
 
@@ -155,7 +155,7 @@ class TestSearchViaUI:
                 print(f"  状态: {status_div.inner_text()[:100]}")
             screenshot(page, "12_search_clicked")
         else:
-            print("  ⚠ 搜索按钮不可见")
+            print("  [!] 搜索按钮不可见")
 
 
 class TestJobManagement:
