@@ -4,14 +4,17 @@
 """
 
 import asyncio
+import json
+import random
 import re
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Optional, List
 from urllib.parse import urljoin
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core.database import get_db
 from ..core.websocket import ws_manager
@@ -23,6 +26,7 @@ from ..models.application import (
     get_application_by_dedup_key,
     compute_dedup_key,
     update_application_from_job,
+    update_application_fields,
     list_applications,
     update_application_status,
     get_today_application_count,
@@ -48,10 +52,12 @@ from ..models.application import (
 )
 from ..models.settings import get_setting
 from ..core import state
-from ..services.scorer import score_job, check_legitimacy, score_hr_activity, score_job_quality, compute_composite_score
+from ..services.scorer import check_legitimacy, score_hr_activity, compute_composite_score, score_job_combined
 from ..services.scraper import BossScraper
-from boss_replier import generate_greeting
-from boss_state import (
+from ..services.automation import check_job_match
+from ..config import CITY_MAP
+from boss_app.services.replier import generate_greeting
+from boss_app.models.shortlist import (
     add_to_shortlist,
     remove_from_shortlist,
     list_shortlists,
@@ -114,72 +120,6 @@ def _matches_search_intent(job_title: str, description: str, search_keywords: st
 
 
 # ══════════════════════════════════════
-#  BOSS直聘城市代码（按省份分组）
-# ══════════════════════════════════════
-
-CITY_MAP = {
-    # 山东省
-    "济南": "101120100",
-    "青岛": "101120200",
-    "淄博": "101120300",
-    "德州": "101120400",
-    "烟台": "101120500",
-    "潍坊": "101120600",
-    "济宁": "101120700",
-    "泰安": "101120800",
-    "临沂": "101120900",
-    "菏泽": "101121000",
-    "滨州": "101121100",
-    "东营": "101121200",
-    "威海": "101121300",
-    "枣庄": "101121400",
-    "日照": "101121500",
-    "聊城": "101121700",
-    # 一线城市
-    "北京": "101010100",
-    "上海": "101020100",
-    "广州": "101280100",
-    "深圳": "101280600",
-    # 新一线城市
-    "成都": "101270100",
-    "杭州": "101210100",
-    "武汉": "101200100",
-    "南京": "101190100",
-    "重庆": "101040100",
-    "西安": "101110100",
-    "长沙": "101250100",
-    "天津": "101030100",
-    "苏州": "101190400",
-    "郑州": "101180100",
-    "东莞": "101281600",
-    "沈阳": "101070100",
-    "宁波": "101210400",
-    "昆明": "101290100",
-    # 其他省会城市
-    "合肥": "101220100",
-    "福州": "101230100",
-    "厦门": "101230200",
-    "南昌": "101240100",
-    "贵阳": "101260100",
-    "南宁": "101300100",
-    "太原": "101100100",
-    "石家庄": "101090100",
-    "哈尔滨": "101050100",
-    "长春": "101060100",
-    "兰州": "101160100",
-    "乌鲁木齐": "101130100",
-    "呼和浩特": "101080100",
-    "拉萨": "101140100",
-    "西宁": "101150100",
-    "银川": "101170100",
-    "海口": "101310100",
-    "三亚": "101310200",
-    # 特殊选项
-    "全国": "100010000",
-}
-
-
-# ══════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════
 
@@ -210,19 +150,40 @@ def _deduplicate_jobs(jobs: list) -> list:
 
 
 def _save_job_with_dedup(job: dict) -> tuple:
-    """保存岗位（URL 优先查重）。返回 (app_id, is_new)。is_new=True 表示首次入库。"""
+    """保存岗位（URL 优先查重）。返回 (app_id, is_new, app_dict)。
+
+    保存前会检查岗位是否符合用户的经验要求和期望薪资条件。
+    不符合条件的岗位不会保存到数据库。
+    """
     job["url"] = _normalize_job_url(job.get("url", ""))
+
+    # 检查岗位是否符合经验要求和期望薪资条件
+    is_match, reason = check_job_match(job)
+    if not is_match:
+        print(f"  [跳过] {reason}: {job.get('title','')[:30]} | {job.get('salary','')} | {job.get('experience','')}")
+        return 0, False, None
+
     # 优先用 URL 查重（同一 URL = 同一岗位）
     if job["url"]:
         existing = get_application_by_url(job["url"])
         if existing:
             update_application_from_job(existing["id"], job)
-            return existing["id"], False
+            return existing["id"], False, existing
     # 新记录（不再用 dedup_key 合并不同 URL 的岗位）
     aid = add_application(job)
     if aid:
         print(f"  [保存] 新岗位 ID={aid}: {job.get('title','')[:30]} → {job['url'][:60]}")
-    return (aid, True) if aid else (0, False)
+        # 构造 synthetic dict 避免额外 SELECT
+        app_dict = {
+            "id": aid, "job_title": job.get("title", ""), "company": job.get("company", ""),
+            "salary": job.get("salary", ""), "job_url": job.get("url", ""), "city": job.get("city", ""),
+            "experience": job.get("experience", ""), "education": job.get("education", ""),
+            "hr_name": job.get("hr_name", ""), "hr_title": job.get("hr_title", ""),
+            "description": job.get("description", ""), "status": "pending",
+            "score": None, "composite_score": None, "hr_activity_score": None, "legitimacy": "unknown",
+        }
+        return aid, True, app_dict
+    return 0, False, None
 
 
 def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
@@ -248,57 +209,29 @@ def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
     }
 
 
-def _score_and_check_jobs(new_ids: list, all_jobs_for_legitimacy: list):
-    """对新入库的岗位异步评分 + 同步合法性检测。返回成功评分数量。"""
-    resume = get_setting("resume_summary", "")
-    scored = 0
-    for aid in new_ids:
-        job = get_application_for_scoring(aid)
-        if not job:
-            continue
-        # 合法性检测（纯规则，同步即可）
-        leg = check_legitimacy(job, all_jobs_for_legitimacy)
-        update_application_legitimacy(aid, leg["level"], leg["signals"])
-        # 评分（LLM，同步调用）
-        title = job.get("job_title", "")
-        company = job.get("company", "")
-        desc = job.get("description", "")
-        salary = job.get("salary", "")
-        try:
-            result = score_job(title, company, desc, salary, resume)
-            if result.get("score") is not None:
-                update_application_score(aid, result["score"], result)
-                scored += 1
-                print(f"[评分] {title} @ {company} → {result['score']}分")
-        except Exception as e:
-            print(f"[评分] 岗位 {aid} 评分失败: {e}")
-    print(f"[评分] 完成: {scored}/{len(new_ids)} 个岗位评分成功")
-    return scored
+def _detail_score_and_autoapply(new_ids: list, all_jobs_for_legitimacy: list, job_cache: dict = None):
+    """三阶段流水线：合法性检测 → 合并评分(并行) → 自动投递。返回评分成功数量。"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-def _detail_score_and_autoapply(new_ids: list, all_jobs_for_legitimacy: list):
-    """三阶段流水线：详情抓取 → 评分 → 自动投递。返回评分成功数量。"""
     resume = get_setting("resume_summary", "")
     scored = 0
 
-    # Phase 1: 详情抓取（需要浏览器，通过 asyncio 在调用方处理）
-    # 详情抓取在 async wrapper 中完成，这里只做评分
-
-    # Phase 2: 评分（综合多维度）
+    # Phase 1: 合法性检测（纯规则，快，串行即可）
+    jobs_data = []
     for aid in new_ids:
-        job = get_application_for_scoring(aid)
+        job = (job_cache or {}).get(aid) or get_application_for_scoring(aid)
         if not job:
             continue
-
-        # 2a. 合法性检测（纯规则）- 增加异常处理防止单条失败影响整批
         try:
             leg = check_legitimacy(job, all_jobs_for_legitimacy)
             update_application_legitimacy(aid, leg["level"], leg["signals"])
         except Exception as e:
             print(f"[评分] 岗位 {aid} 合法性检测失败: {e}")
-            # 合法性检测失败时，使用安全默认值
             update_application_legitimacy(aid, "unknown", [{"type": "check_error", "detail": f"检测异常: {str(e)[:50]}"}])
+        jobs_data.append((aid, job))
 
+    # Phase 2: 合并评分（LLM，并行，每个岗位只需 1 次 LLM 调用）
+    def _score_one(aid, job):
         title = job.get("job_title", "")
         company = job.get("company", "")
         desc = job.get("description", "")
@@ -306,48 +239,39 @@ def _detail_score_and_autoapply(new_ids: list, all_jobs_for_legitimacy: list):
         hr_name = job.get("hr_name", "")
         hr_activity = job.get("hr_activity", "")
 
-        # 2b. 简历匹配评分（LLM）
-        cv_score = None
         try:
-            result = score_job(title, company, desc, salary, resume)
-            cv_score = result.get("score")
-            if cv_score is not None:
-                update_application_score(aid, cv_score, result)
-                scored += 1
-            else:
-                # LLM返回None时，使用保守默认分数
+            result = score_job_combined(title, company, desc, salary, hr_name, resume)
+            cv_score = result.get("cv_score")
+            quality_score = result.get("quality_score")
+            if cv_score is None:
                 cv_score = 30
-                result = {"score": 30, "key_skills": [], "gap": "", "advice": "", "summary": "LLM评分失败，使用保守默认分", "has_resume": bool(resume)}
-                update_application_score(aid, cv_score, result)
-                print(f"[评分] 岗位 {aid} LLM返回None，使用保守默认分30")
+            if quality_score is None:
+                quality_score = 40
+            update_application_score(aid, cv_score, result)
         except Exception as e:
-            print(f"[评分] 岗位 {aid} CV匹配评分失败: {e}")
-            # 异常时使用保守默认分数
+            print(f"[评分] 岗位 {aid} 评分失败: {e}")
             cv_score = 30
-            result = {"score": 30, "key_skills": [], "gap": "", "advice": "", "summary": f"评分异常: {str(e)[:50]}", "has_resume": bool(resume)}
+            quality_score = 40
+            result = {"summary": f"评分异常: {str(e)[:50]}"}
             update_application_score(aid, cv_score, result)
 
-        # 2c. 招聘信息质量评分（LLM）
-        quality_score = None
-        try:
-            q_result = score_job_quality(title, company, desc, salary, hr_name)
-            quality_score = q_result.get("quality_score")
-            if quality_score is None or quality_score == 0:
-                quality_score = 40  # LLM返回None或0时使用保守默认分
-                print(f"[评分] 岗位 {aid} 质量评分返回{q_result.get('quality_score')}，使用保守默认分40")
-        except Exception as e:
-            print(f"[评分] 岗位 {aid} 质量评分失败: {e}")
-            quality_score = 40  # 异常时使用保守默认分
-
-        # 2d. HR活跃度评分（纯规则）
         hr_score = score_hr_activity(hr_activity)
         update_application_hr_activity(aid, hr_score)
 
-        # 2e. 综合评分
         composite = compute_composite_score(cv_score, quality_score, hr_score)
         update_application_composite_score(aid, composite)
 
         print(f"[评分] {title} @ {company} → CV={cv_score} 质量={quality_score} HR={hr_score} 综合={composite}")
+        return 1 if cv_score != 30 else 0
+
+    # 最多 3 个岗位并行评分
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {pool.submit(_score_one, aid, job): aid for aid, job in jobs_data}
+        for future in as_completed(futures):
+            try:
+                scored += future.result()
+            except Exception as e:
+                print(f"[评分] 并行评分异常: {e}")
 
     print(f"[评分] 完成: {scored}/{len(new_ids)} 个岗位评分成功")
     return scored
@@ -358,7 +282,6 @@ async def _fetch_details_and_score(new_ids: list, all_jobs_for_legitimacy: list)
 
     返回: (scored_count, applied_count) 元组
     """
-    import time
     from ..services.scraper import BossScraper
 
     # 检查是否启用HR活跃度过滤
@@ -368,9 +291,11 @@ async def _fetch_details_and_score(new_ids: list, all_jobs_for_legitimacy: list)
     print(f"[详情] 开始抓取 {len(new_ids)} 个岗位详情...")
     filtered_ids = []  # 通过活跃度过滤的岗位ID
     filtered_count = 0
+    _detail_cache = {}  # aid -> job dict, 传递给评分阶段避免重复查询
 
     for aid in new_ids:
         job = get_application_for_scoring(aid)
+        _detail_cache[aid] = job
         if not job or not job.get("job_url"):
             continue
         try:
@@ -396,23 +321,12 @@ async def _fetch_details_and_score(new_ids: list, all_jobs_for_legitimacy: list)
                 if detail.get("hr_activity"):
                     updates["hr_activity"] = detail["hr_activity"]
                 if updates:
-                    # 直接用 SQL 更新详情字段
-                    db = get_db()
-                    sets = ", ".join(f"{k}=?" for k in updates)
-                    vals = list(updates.values()) + [aid]
-                    db.execute(f"UPDATE applications SET {sets}, updated_at=CURRENT_TIMESTAMP WHERE id=?", vals)
-                    db.commit()
+                    update_application_fields(aid, updates)
 
                 # HR活跃度过滤：3天以上不活跃的岗位标记为"死岗位"
                 hr_activity = detail.get("hr_activity", "")
                 if filter_inactive and BossScraper.is_hr_inactive(hr_activity):
-                    # 软删除不活跃岗位（不展示给用户）
-                    db = get_db()
-                    db.execute(
-                        "UPDATE applications SET deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (aid,)
-                    )
-                    db.commit()
+                    soft_delete_application(aid)
                     filtered_count += 1
                     print(f"[过滤] {job.get('job_title', '')} @ {job.get('company', '')} → HR不活跃({hr_activity})，已过滤")
                     continue
@@ -422,7 +336,7 @@ async def _fetch_details_and_score(new_ids: list, all_jobs_for_legitimacy: list)
             else:
                 # 无法获取详情的岗位保留
                 filtered_ids.append(aid)
-            await asyncio.sleep(3)  # 避免请求过快
+            await asyncio.sleep(1.5)  # 避免请求过快
         except Exception as e:
             filtered_ids.append(aid)
             print(f"[详情] 岗位 {aid} 详情抓取失败: {e}")
@@ -435,7 +349,7 @@ async def _fetch_details_and_score(new_ids: list, all_jobs_for_legitimacy: list)
         return 0, 0
 
     # Phase 2: 评分（在线程池中执行，不阻塞事件循环）
-    scored = await asyncio.to_thread(_detail_score_and_autoapply, filtered_ids, all_jobs_for_legitimacy)
+    scored = await asyncio.to_thread(_detail_score_and_autoapply, filtered_ids, all_jobs_for_legitimacy, _detail_cache)
 
     # Phase 3: 自动投递
     applied = 0
@@ -451,7 +365,7 @@ async def _execute_auto_apply():
 
     返回: 成功投递数量
     """
-    threshold = int(get_setting("auto_apply_threshold", "73"))
+    threshold = int(get_setting("auto_apply_threshold", "80"))
     hr_active_required = get_setting("auto_apply_hr_active_required", "true") == "true"
     daily_limit = int(get_setting("daily_apply_limit", "15"))
     search_keywords = get_setting("search_keywords", "")
@@ -483,7 +397,6 @@ async def _execute_auto_apply():
     print(f"[自动投递] 找到 {len(candidates)} 个候选，本次投递 {len(to_apply)} 个")
 
     applied = 0
-    import random
     for job in to_apply:
         app_id = job["id"]
         title = job.get("job_title", "")
@@ -511,6 +424,10 @@ async def _execute_auto_apply():
                     "company": company,
                     "success": True,
                 })
+            elif result.get("skipped"):
+                msg = result.get("message", "已跳过")
+                log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"skipped: {msg}")
+                print(f"[自动投递] {title} @ {company} → 跳过: {msg}")
             else:
                 msg = result.get("message", "未知原因")
                 log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"failed: {msg}")
@@ -543,8 +460,8 @@ class SearchRequest(BaseModel):
     keyword: str = "AI Agent"
     city: str = ""
     welfare: Optional[str] = None
-    limit: int = 60
-    max_pages: int = 10
+    limit: int = Field(default=60, ge=1, le=200)
+    max_pages: int = Field(default=10, ge=1, le=30)
 
 
 class ApplyRequest(BaseModel):
@@ -569,11 +486,11 @@ class AnalyzeRequest(BaseModel):
 
 
 class DeleteRequest(BaseModel):
-    job_ids: List[int]
+    job_ids: List[int] = Field(..., min_length=1, max_length=500)
 
 
 class RestoreRequest(BaseModel):
-    job_ids: List[int]
+    job_ids: List[int] = Field(..., min_length=1, max_length=500)
 
 
 class ClearRequest(BaseModel):
@@ -589,6 +506,126 @@ class ClearRequest(BaseModel):
 def list_jobs(status: Optional[str] = None, limit: int = 100, sort_by: str = "composite_score"):
     jobs = list_applications(status, limit, sort_by=sort_by)
     return {"jobs": jobs, "total": len(jobs)}
+
+
+async def _background_score_and_apply(new_ids, keyword, city, found, db_existing, page_dup):
+    """后台评分：搜索完成后异步执行详情抓取+评分，不阻塞搜索响应。"""
+    from concurrent.futures import ThreadPoolExecutor
+    scored = 0
+    filtered_count = 0
+    try:
+        filter_inactive = get_setting("filter_inactive_hr", "true") == "true"
+        resume = get_setting("resume_summary", "")
+        all_jobs = get_all_active_jobs_for_legitimacy()
+
+        # Phase 1: 串行抓取详情（需要浏览器锁）
+        _scoring_cache = {}  # aid -> job dict, 避免重复 SELECT
+        for idx, aid in enumerate(new_ids):
+            job = get_application_for_scoring(aid)
+            _scoring_cache[aid] = job
+            if not job or not job.get("job_url"):
+                continue
+
+            print(f"[详情] ({idx+1}/{len(new_ids)}) 开始处理: {job.get('job_title', '')}")
+
+            try:
+                await state.browser_sync_lock.acquire()
+                try:
+                    detail = await asyncio.wait_for(
+                        state.automation.fetch_detail(job["job_url"]),
+                        timeout=20
+                    )
+                finally:
+                    state.browser_sync_lock.release()
+
+                if detail:
+                    updates = {}
+                    if detail.get("description") and not job.get("description"):
+                        updates["description"] = detail["description"]
+                    if detail.get("hr_name") and not job.get("hr_name"):
+                        updates["hr_name"] = detail["hr_name"]
+                    if detail.get("hr_title") and not job.get("hr_title"):
+                        updates["hr_title"] = detail["hr_title"]
+                    if detail.get("hr_activity"):
+                        updates["hr_activity"] = detail["hr_activity"]
+                    if updates:
+                        update_application_fields(aid, updates)
+
+                    hr_activity = detail.get("hr_activity", "")
+                    if filter_inactive and BossScraper.is_hr_inactive(hr_activity):
+                        soft_delete_application(aid)
+                        filtered_count += 1
+                        print(f"[过滤] {job.get('job_title', '')} → HR不活跃({hr_activity})")
+                        continue
+            except asyncio.TimeoutError:
+                print(f"[详情] 岗位 {aid} 超时(20s)，跳过详情")
+            except Exception as e:
+                print(f"[详情] 岗位 {aid} 抓取失败: {e}")
+
+        # Phase 2: 并行评分（LLM调用，不需要浏览器锁）
+        scoreable_ids = []
+        for aid in new_ids:
+            job = _scoring_cache.get(aid) or get_application_for_scoring(aid)
+            if job:
+                leg = check_legitimacy(job, all_jobs)
+                update_application_legitimacy(aid, leg["level"], leg["signals"])
+                scoreable_ids.append(aid)
+
+        def _score_one(aid):
+            job = _scoring_cache.get(aid) or get_application_for_scoring(aid)
+            if not job:
+                return 0
+            title = job.get("job_title", "")
+            company = job.get("company", "")
+            desc = job.get("description", "")
+            salary = job.get("salary", "")
+            hr_name = job.get("hr_name", "")
+            hr_activity = job.get("hr_activity", "")
+
+            cv_score = None
+            quality_score = None
+            try:
+                result = score_job_combined(title, company, desc, salary, hr_name, resume)
+                cv_score = result.get("cv_score")
+                quality_score = result.get("quality_score")
+                if cv_score is not None:
+                    update_application_score(aid, cv_score, result)
+                else:
+                    cv_score = 30
+                if quality_score is None:
+                    quality_score = 40
+            except Exception as e:
+                print(f"[评分] 合并评分失败: {e}")
+                cv_score = 30
+                quality_score = 40
+
+            hr_score = score_hr_activity(hr_activity)
+            update_application_hr_activity(aid, hr_score)
+            composite = compute_composite_score(cv_score, quality_score, hr_score)
+            update_application_composite_score(aid, composite)
+            print(f"[评分] {title} → 综合:{composite}")
+            return 1
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(_score_one, scoreable_ids))
+        scored = sum(results)
+
+        print(f"[后台评分] 完成: {scored}/{len(new_ids)} 评分成功, 过滤 {filtered_count}")
+        await ws_manager.broadcast({
+            "type": "search_complete",
+            "keyword": keyword,
+            "city": city,
+            "found": found,
+            "new": len(new_ids),
+            "existing": db_existing,
+            "page_dup": page_dup,
+            "scored": scored,
+            "filtered": filtered_count,
+        })
+    except Exception as e:
+        print(f"[后台评分] 异常: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @router.post("/api/jobs/search")
@@ -616,7 +653,8 @@ async def search_jobs(req: SearchRequest):
         except asyncio.TimeoutError:
             raise HTTPException(status_code=500, detail="搜索超时(120s)，请重试")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
+            print(f"[搜索] 搜索异常: {e}")
+            raise HTTPException(status_code=500, detail="搜索失败，请检查浏览器状态后重试")
 
         # 福利筛选
         if req.welfare:
@@ -630,147 +668,25 @@ async def search_jobs(req: SearchRequest):
         new_ids = []
         result_jobs = []
         db_existing = 0
+        filtered_count = 0
         for j in jobs:
-            aid, is_new = _save_job_with_dedup(j)
-            if is_new and aid:
+            aid, is_new, app_dict = _save_job_with_dedup(j)
+            if aid == 0 and not is_new:
+                # 被过滤掉的岗位（不符合经验要求或期望薪资）
+                filtered_count += 1
+            elif is_new and aid:
                 new_ids.append(aid)
-                result_jobs.append(_search_job_payload(j, get_application(aid)))
+                result_jobs.append(_search_job_payload(j, app_dict))
             elif not is_new:
                 db_existing += 1
 
-        print(f"[搜索] 页面 {raw_found} 条 → 去重 {len(jobs)} 条 → 新增 {len(new_ids)}，已有 {db_existing}")
+        print(f"[搜索] 页面 {raw_found} 条 → 去重 {len(jobs)} 条 → 新增 {len(new_ids)}，已有 {db_existing}，过滤 {filtered_count}")
 
-        # Phase 2: 逐个抓取详情 + 评分（每个单独获取锁）
-        scored = 0
-        filtered_count = 0
+        # 立即返回搜索结果，评分在后台执行
         if new_ids:
-            filter_inactive = get_setting("filter_inactive_hr", "true") == "true"
-            resume = get_setting("resume_summary", "")
-            all_jobs = get_all_active_jobs_for_legitimacy()
+            asyncio.create_task(_background_score_and_apply(new_ids, req.keyword, req.city, len(jobs), db_existing, page_dup))
 
-            for idx, aid in enumerate(new_ids):
-                job = get_application_for_scoring(aid)
-                if not job or not job.get("job_url"):
-                    continue
-
-                print(f"[详情] ({idx+1}/{len(new_ids)}) 开始处理: {job.get('job_title', '')} → {job.get('job_url', '')}")
-
-                # 1. 抓取详情（单独获取锁，有超时）
-                try:
-                    # 先获取锁，避免在 wait_for 内部获取导致锁泄漏
-                    await state.browser_sync_lock.acquire()
-                    try:
-                        detail = await asyncio.wait_for(
-                            state.automation.fetch_detail(job["job_url"]),
-                            timeout=20
-                        )
-                    finally:
-                        state.browser_sync_lock.release()
-
-                    if detail:
-                        updates = {}
-                        if detail.get("description") and not job.get("description"):
-                            updates["description"] = detail["description"]
-                        if detail.get("hr_name") and not job.get("hr_name"):
-                            updates["hr_name"] = detail["hr_name"]
-                        if detail.get("hr_title") and not job.get("hr_title"):
-                            updates["hr_title"] = detail["hr_title"]
-                        if detail.get("hr_activity"):
-                            updates["hr_activity"] = detail["hr_activity"]
-                        if updates:
-                            db = get_db()
-                            sets = ", ".join(f"{k}=?" for k in updates)
-                            vals = list(updates.values()) + [aid]
-                            db.execute(f"UPDATE applications SET {sets}, updated_at=CURRENT_TIMESTAMP WHERE id=?", vals)
-                            db.commit()
-
-                        # 2. HR活跃度过滤
-                        hr_activity = detail.get("hr_activity", "")
-                        if filter_inactive and BossScraper.is_hr_inactive(hr_activity):
-                            db = get_db()
-                            db.execute("UPDATE applications SET deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?", (aid,))
-                            db.commit()
-                            filtered_count += 1
-                            print(f"[过滤] {job.get('job_title', '')} → HR不活跃({hr_activity})")
-                            continue
-                except asyncio.TimeoutError:
-                    print(f"[详情] 岗位 {aid} 超时(30s)，跳过")
-                except Exception as e:
-                    print(f"[详情] 岗位 {aid} 抓取失败: {e}")
-
-                # 3. 重新从数据库读取（详情抓取可能更新了 description/hr_name/hr_activity）
-                job = get_application_for_scoring(aid)
-                if not job:
-                    continue
-
-                # 4. 合法性检测
-                leg = check_legitimacy(job, all_jobs)
-                update_application_legitimacy(aid, leg["level"], leg["signals"])
-
-                # 5. 综合评分（LLM 调用放到线程池，不阻塞事件循环）
-                title = job.get("job_title", "")
-                company = job.get("company", "")
-                desc = job.get("description", "")
-                salary = job.get("salary", "")
-                hr_name = job.get("hr_name", "")
-                hr_activity = job.get("hr_activity", "")
-
-                cv_score = None
-                try:
-                    result = await asyncio.to_thread(score_job, title, company, desc, salary, resume)
-                    cv_score = result.get("score")
-                    if cv_score is not None:
-                        update_application_score(aid, cv_score, result)
-                        scored += 1
-                except Exception as e:
-                    print(f"[评分] CV评分失败: {e}")
-
-                quality_score = None
-                try:
-                    q_result = await asyncio.to_thread(score_job_quality, title, company, desc, salary, hr_name)
-                    quality_score = q_result.get("quality_score")
-                    if quality_score is None or quality_score == 0:
-                        quality_score = 40
-                except Exception:
-                    quality_score = 40
-
-                hr_score = score_hr_activity(hr_activity)
-                update_application_hr_activity(aid, hr_score)
-
-                composite = compute_composite_score(cv_score, quality_score, hr_score)
-                update_application_composite_score(aid, composite)
-
-                print(f"[评分] ({idx+1}/{len(new_ids)}) {title} → 综合:{composite} (CV:{cv_score} 质量:{quality_score} HR:{hr_score})")
-
-                # 岗位间延迟（避免触发反爬）
-                await asyncio.sleep(2)
-
-        # 重新获取结果（包含评分数据）
-        result_jobs = []
-        for j in jobs:
-            existing = get_application_by_dedup_key(compute_dedup_key(j))
-            if existing:
-                if not existing.get("deleted_at"):
-                    result_jobs.append(_search_job_payload(j, existing))
-
-        if filtered_count > 0:
-            print(f"[过滤] 共过滤 {filtered_count} 个不活跃岗位")
-        print(f"[搜索] 完成: {scored}/{len(new_ids)} 评分成功")
-
-        await ws_manager.broadcast(
-            {
-                "type": "search_complete",
-                "keyword": req.keyword,
-                "city": req.city,
-                "found": len(jobs),
-                "new": len(new_ids),
-                "existing": db_existing,
-                "page_dup": page_dup,
-                "scored": scored,
-                "filtered": filtered_count,
-            }
-        )
-        resp = {"jobs_found": len(jobs), "new_jobs": len(new_ids), "db_existing": db_existing, "page_duplicates": page_dup, "saved": len(new_ids), "scored": scored, "filtered": filtered_count, "jobs": result_jobs}
+        resp = {"jobs_found": len(jobs), "new_jobs": len(new_ids), "db_existing": db_existing, "page_duplicates": page_dup, "saved": len(new_ids), "scored": 0, "filtered": filtered_count, "jobs": result_jobs, "scoring_in_background": bool(new_ids)}
         return resp
     except HTTPException:
         raise
@@ -778,7 +694,7 @@ async def search_jobs(req: SearchRequest):
         print(f"[搜索] 未预期的错误: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"搜索过程出错: {e}")
+        raise HTTPException(status_code=500, detail="搜索过程出错，请重试")
     finally:
         chat_monitor.paused = was_paused
 
@@ -791,8 +707,14 @@ async def search_jobs(req: SearchRequest):
 @router.post("/api/jobs/deduplicate")
 def deduplicate_jobs():
     """清理历史重复数据：按 公司+岗位+城市+薪资 联合去重，每组保留最早记录。"""
-    result = deduplicate_applications()
-    return result
+    try:
+        return deduplicate_applications()
+    except sqlite3.OperationalError as e:
+        print(f"[去重] 数据库繁忙: {e}")
+        raise HTTPException(status_code=503, detail="数据库繁忙，请稍后重试")
+    except Exception as e:
+        print(f"[去重] 去重失败: {e}")
+        raise HTTPException(status_code=500, detail="去重操作失败，请重试")
 
 
 @router.get("/api/jobs/dedup-stats")
@@ -859,10 +781,7 @@ async def refetch_job_details():
                     updates["hr_activity"] = detail["hr_activity"]
 
                 if updates:
-                    sets = ", ".join(f"{k}=?" for k in updates)
-                    vals = list(updates.values()) + [aid]
-                    db.execute(f"UPDATE applications SET {sets}, updated_at=CURRENT_TIMESTAMP WHERE id=?", vals)
-                    db.commit()
+                    update_application_fields(aid, updates)
 
                     # 更新HR活跃度分数
                     hr_activity = detail.get("hr_activity", "")
@@ -905,7 +824,7 @@ async def skip_job(job_id: int):
 
 @router.post("/api/jobs/{job_id}/score")
 async def score_single_job(job_id: int):
-    """手动重新评分单个岗位。"""
+    """手动重新评分单个岗位（合并评分，一次 LLM 调用）。"""
     job = get_application_for_scoring(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="岗位不存在")
@@ -917,19 +836,20 @@ async def score_single_job(job_id: int):
     hr_name = job.get("hr_name", "")
     hr_activity = job.get("hr_activity", "")
 
-    # CV匹配评分
-    cv_result = await asyncio.to_thread(score_job, title, company, desc, salary, resume)
-    cv_score = cv_result.get("score")
+    # 合并评分（一次 LLM 调用同时返回 CV + 质量分）
+    result = await asyncio.to_thread(score_job_combined, title, company, desc, salary, hr_name, resume)
+    cv_score = result.get("cv_score")
+    quality_score = result.get("quality_score")
     if cv_score is None:
+        # 评分失败时仅填充分数，保留 LLM 已返回的 key_skills/gap/advice 等字段
         cv_score = 30
-        cv_result = {"score": 30, "key_skills": [], "gap": "", "advice": "", "summary": "LLM评分失败，使用保守默认分", "has_resume": bool(resume)}
-    update_application_score(job_id, cv_score, cv_result)
-
-    # 招聘质量评分
-    quality_result = await asyncio.to_thread(score_job_quality, title, company, desc, salary, hr_name)
-    quality_score = quality_result.get("quality_score")
-    if quality_score is None or quality_score == 0:
+        result["cv_score"] = 30
+        result.setdefault("quality_score", 40)
+        result.setdefault("summary", "LLM评分失败，使用保守默认分")
+    if quality_score is None:
         quality_score = 40
+        result["quality_score"] = 40
+    update_application_score(job_id, cv_score, result)
 
     # HR活跃度评分
     hr_score = score_hr_activity(hr_activity)
@@ -944,7 +864,72 @@ async def score_single_job(job_id: int):
     leg = check_legitimacy(job, all_jobs)
     update_application_legitimacy(job_id, leg["level"], leg["signals"])
 
-    return {"cv_score": cv_score, "quality_score": quality_score, "hr_score": hr_score, "composite": composite, "legitimacy": leg}
+    return {
+        "cv_score": cv_score,
+        "quality_score": quality_score,
+        "hr_score": hr_score,
+        "composite": composite,
+        "legitimacy": leg,
+        "key_skills": result.get("key_skills", []),
+        "gap": result.get("gap", ""),
+        "advice": result.get("advice", ""),
+        "summary": result.get("summary", ""),
+    }
+
+
+@router.post("/api/jobs/batch-score")
+async def batch_score_jobs():
+    """批量评分所有未评分岗位（后台执行，不阻塞）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    db = get_db()
+    unscored = db.execute(
+        "SELECT id FROM applications WHERE score IS NULL AND deleted_at IS NULL"
+    ).fetchall()
+    if not unscored:
+        return {"message": "没有待评分的岗位", "count": 0}
+    ids = [r["id"] for r in unscored]
+    resume = get_setting("resume_summary", "")
+    all_jobs = get_all_active_jobs_for_legitimacy()
+
+    async def _batch_bg():
+        scored = 0
+        def _score_one(aid):
+            job = get_application_for_scoring(aid)
+            if not job:
+                return 0
+            try:
+                result = score_job_combined(
+                    job.get("job_title", ""), job.get("company", ""),
+                    job.get("description", ""), job.get("salary", ""),
+                    job.get("hr_name", ""), resume
+                )
+                cv = result.get("cv_score")
+                if cv is not None:
+                    update_application_score(aid, cv, result)
+                else:
+                    cv = 30
+                qs = result.get("quality_score") or 40
+                hr_act = job.get("hr_activity", "")
+                hr_s = score_hr_activity(hr_act)
+                update_application_hr_activity(aid, hr_s)
+                leg = check_legitimacy(job, all_jobs)
+                update_application_legitimacy(aid, leg["level"], leg["signals"])
+                comp = compute_composite_score(cv, qs, hr_s)
+                update_application_composite_score(aid, comp)
+                return 1
+            except Exception as e:
+                print(f"[批量评分] 岗位 {aid} 失败: {e}")
+                return 0
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(_score_one, ids))
+        scored = sum(results)
+        print(f"[批量评分] 完成: {scored}/{len(ids)}")
+        await ws_manager.broadcast({"type": "score_complete", "count": scored})
+
+    task = asyncio.create_task(_batch_bg())
+    state.background_tasks.append(task)
+    task.add_done_callback(lambda t: state.background_tasks.remove(t) if t in state.background_tasks else None)
+    return {"message": f"开始批量评分 {len(ids)} 个岗位", "count": len(ids)}
 
 
 # ══════════════════════════════════════
@@ -1013,21 +998,40 @@ async def apply_to_job(req: ApplyRequest):
     if get_today_application_count() >= daily_limit:
         raise HTTPException(status_code=429, detail="已达到今日投递上限")
 
+    # 获取岗位数据用于匹配检查
+    job = get_application_by_url(req.job_url)
+    job_data = None
+    if job:
+        job_data = {
+            "title": job.get("job_title", ""),
+            "company": job.get("company", ""),
+            "salary": job.get("salary", ""),
+            "experience": job.get("experience", ""),
+            "education": job.get("education", ""),
+        }
+
     greeting = req.greeting
     if not greeting:
-        job = get_application_by_url(req.job_url)
         title = job["job_title"] if job else "相关岗位"
         company = job["company"] if job else "贵公司"
-        style = get_setting("ai_reply_style", "professional")
-        greeting = generate_greeting(title, company, style=style)
+        greeting = generate_greeting(title, company)
 
-    result = await state.automation.apply_to_job(req.job_url, greeting)
+    result = await state.automation.apply_to_job(req.job_url, greeting, job_data)
     if result.get("success"):
         await ws_manager.broadcast(
             {
                 "type": "apply_complete",
                 "job_url": req.job_url,
                 "job_id": result.get("application_id"),
+            }
+        )
+    elif result.get("skipped"):
+        await ws_manager.broadcast(
+            {
+                "type": "apply_complete",
+                "job_url": req.job_url,
+                "skipped": True,
+                "reason": result.get("message", ""),
             }
         )
     return result
@@ -1063,7 +1067,8 @@ async def scan_current_page():
         async with state.browser_sync_lock:
             jobs = await state.automation.scan_current_page()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"扫描失败: {e}")
+        print(f"[扫描] 扫描失败: {e}")
+        raise HTTPException(status_code=500, detail="页面扫描失败，请检查浏览器状态后重试")
 
     raw_found = len(jobs)
     jobs = _deduplicate_jobs(jobs)
@@ -1073,10 +1078,10 @@ async def scan_current_page():
     result_jobs = []
     db_existing = 0
     for j in jobs:
-        aid, is_new = _save_job_with_dedup(j)
+        aid, is_new, app_dict = _save_job_with_dedup(j)
         if is_new and aid:
             new_ids.append(aid)
-            result_jobs.append(_search_job_payload(j, get_application(aid)))
+            result_jobs.append(_search_job_payload(j, app_dict))
         elif not is_new:
             db_existing += 1
 
@@ -1087,7 +1092,7 @@ async def scan_current_page():
         all_jobs = get_all_active_jobs_for_legitimacy()
 
         async def _pipeline_bg():
-            scored = await _fetch_details_and_score(new_ids, all_jobs)
+            scored, applied = await _fetch_details_and_score(new_ids, all_jobs)
             if scored > 0:
                 await ws_manager.broadcast({"type": "score_complete", "count": scored})
 
@@ -1178,7 +1183,9 @@ async def analyze_jd(req: AnalyzeRequest):
 
     raw = ""
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "interview"))
+        _interview_path = str(Path(__file__).resolve().parent.parent.parent / "interview")
+        if _interview_path not in sys.path:
+            sys.path.insert(0, _interview_path)
         from llm_client import llm_chat_deepseek, _load_ai_config
 
         cfg = _load_ai_config()
@@ -1190,8 +1197,6 @@ async def analyze_jd(req: AnalyzeRequest):
             system_prompt="你是求职辅导专家，输出严格JSON。",
             temperature=0.3,
         )
-
-        import json
 
         cleaned = raw.strip()
         # 去掉 markdown 代码块包裹
@@ -1207,14 +1212,16 @@ async def analyze_jd(req: AnalyzeRequest):
             result["match_score"] = None
         return result
     except json.JSONDecodeError:
-        return {"error": "AI 返回的内容不是有效JSON，请重试", "match_score": 0, "summary": raw[:200] if raw else "无响应"}
+        print(f"[分析] AI返回非JSON: {raw[:200] if raw else '无响应'}")
+        return {"error": "AI 返回的内容不是有效JSON，请重试", "match_score": 0, "summary": "AI响应异常"}
     except Exception as e:
         err_msg = str(e)
+        print(f"[分析] AI分析异常: {err_msg}")
         if "401" in err_msg or "403" in err_msg:
             return {"error": "AI API Key 无效，请在设置页重新配置", "match_score": 0, "summary": "认证失败"}
         if "timeout" in err_msg.lower() or "connect" in err_msg.lower():
             return {"error": "AI 服务连接超时，请检查网络或稍后重试", "match_score": 0, "summary": "网络异常"}
-        return {"error": f"AI分析失败: {err_msg[:200]}", "match_score": 0, "summary": "请检查AI配置"}
+        return {"error": "AI分析失败，请检查AI配置后重试", "match_score": 0, "summary": "请检查AI配置"}
 
 
 # ══════════════════════════════════════
@@ -1253,20 +1260,21 @@ def get_shortlists():
     return {"shortlists": list_shortlists()}
 
 
+class ShortlistRequest(BaseModel):
+    job_url: str
+    title: str = ""
+    company: str = ""
+    salary: str = ""
+    city: str = ""
+    note: str = ""
+
+
 @router.post("/api/shortlists")
-def add_shortlist(req: dict = None):
-    url = (req or {}).get("job_url", "")
-    if not url:
-        raise HTTPException(status_code=400, detail="缺少 job_url")
-    if is_in_shortlist(url):
+def add_shortlist(req: ShortlistRequest):
+    if is_in_shortlist(req.job_url):
         return {"status": "already_exists"}
     sid = add_to_shortlist(
-        url,
-        req.get("title", ""),
-        req.get("company", ""),
-        req.get("salary", ""),
-        req.get("city", ""),
-        req.get("note", ""),
+        req.job_url, req.title, req.company, req.salary, req.city, req.note,
     )
     if sid:
         return {"status": "ok", "id": sid}

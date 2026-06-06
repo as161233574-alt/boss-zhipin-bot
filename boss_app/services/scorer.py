@@ -17,6 +17,20 @@ if _interview_dir not in sys.path:
 from llm_client import llm_chat_deepseek, _load_ai_config
 
 
+def _strip_code_fence(text: str) -> str:
+    """去掉 LLM 返回的 ```json ... ``` 包裹，便于 json.loads。"""
+    cleaned = text.strip()
+    # 尝试提取 ```json ... ``` 块（大小写不敏感，允许前后有其他文本）
+    m = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # 去掉开头的 ```json 标记（无闭合的情况）
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    # 去掉结尾的 ``` 标记
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+    return cleaned.strip()
+
+
 # ══════════════════════════════════════
 #  岗位评分 (LLM)
 # ══════════════════════════════════════
@@ -106,12 +120,7 @@ def score_job(
             system_prompt="你是求职辅导专家。输出严格JSON，不要输出任何其他内容。",
             temperature=0.3,
         )
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-            cleaned = cleaned.strip()
-        result = json.loads(cleaned)
+        result = json.loads(_strip_code_fence(raw))
         result["has_resume"] = has_resume
         # 确保 score 在合理范围
         if result.get("score") is not None:
@@ -207,7 +216,6 @@ def score_hr_activity(activity_text: str) -> int:
     if "今日活跃" in activity_text:
         return 80
     # 匹配 "3日内活跃"、"三天内活跃" 等，避免误中"半年内"
-    import re
     if re.search(r'\d+日内活跃|三天内活跃', activity_text):
         return 60
     if "本周活跃" in activity_text:
@@ -264,12 +272,7 @@ def score_job_quality(
             system_prompt="你是求职顾问。输出严格JSON，不要输出任何其他内容。",
             temperature=0.3,
         )
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-            cleaned = cleaned.strip()
-        result = json.loads(cleaned)
+        result = json.loads(_strip_code_fence(raw))
         if result.get("quality_score") is not None:
             result["quality_score"] = max(0, min(100, int(result["quality_score"])))
         return result
@@ -307,3 +310,97 @@ def compute_composite_score(cv_match_score, quality_score, hr_activity_score) ->
     total_w = sum(weights)
     composite = sum(s * w for s, w in zip(scores, weights)) / total_w
     return max(0, min(100, int(round(composite))))
+
+
+# ══════════════════════════════════════
+#  合并评分（一次 LLM 调用返回 CV + 质量分）
+# ══════════════════════════════════════
+
+
+def score_job_combined(
+    job_title: str,
+    company: str,
+    description: str,
+    salary: str,
+    hr_name: str,
+    resume_summary: str = "",
+) -> dict:
+    """一次 LLM 调用同时返回 CV 匹配分和招聘质量分，节省 50% LLM 时间。"""
+    cfg = _load_ai_config()
+    if not cfg.get("api_key") or len(cfg["api_key"]) < 10:
+        return {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": "AI未配置", "quality_notes": "AI未配置", "has_resume": False}
+
+    has_resume = bool(resume_summary and len(resume_summary.strip()) > 5)
+
+    resume_section = ""
+    if has_resume:
+        resume_section = f"""
+## 求职者简历摘要
+{resume_summary[:1500]}"""
+
+    prompt = f"""你是求职辅导专家。请对以下岗位同时进行两项评分，返回严格JSON。
+{resume_section}
+
+## 岗位信息
+- 职位: {job_title}
+- 公司: {company}
+- 薪资: {salary}
+- JD: {description[:2000]}
+- HR信息: {'有（' + hr_name + '）' if hr_name else '无'}
+
+## 评分任务
+
+### 任务1: CV匹配度评分 (cv_score, 0-100)
+{'根据简历与岗位的匹配度评分。技能不匹配→低分(<50)，高度匹配→70+。\n评估维度: 技能匹配(40%)、经验匹配(20%)、薪资合理性(15%)、公司信息(10%)、发展前景(10%)、其他(5%)' if has_resume else '无简历，仅评估客观维度：薪资透明度25%、JD质量25%、技能要求合理性20%、公司信息15%、发展前景15%。'}
+
+### 任务2: 招聘信息质量评分 (quality_score, 0-100)
+评估JD的完整度和质量。
+评估维度: JD详细程度(30%)、薪资透明度(25%)、公司信息(20%)、技术要求合理性(15%)、HR可信度(10%)
+
+## 输出格式（严格JSON，不要输出任何其他内容）
+{{
+  "cv_score": 75,
+  "quality_score": 70,
+  "key_skills": ["Python", "FastAPI", "Docker"],
+  "gap": "缺少K8s和微服务经验",
+  "advice": "建议在简历中强调项目经验和技术栈匹配度",
+  "summary": "整体匹配度中等，技术栈基本吻合",
+  "quality_notes": "JD较详细，薪资明确，公司信息完整"
+}}
+
+注意：
+- key_skills: 必须列出至少2个岗位要求的核心技能
+- gap: 必须说明求职者与岗位之间的主要差距
+- advice: 必须给出至少一条具体建议
+- summary: 必须用一句话概括匹配度
+- quality_notes: 必须说明JD质量的优缺点"""
+
+    raw = ""
+    try:
+        raw = llm_chat_deepseek(
+            [{"role": "user", "content": prompt}],
+            system_prompt="你是求职辅导专家。输出严格JSON，不要输出任何其他内容。",
+            temperature=0.3,
+        )
+        result = json.loads(_strip_code_fence(raw))
+        result["has_resume"] = has_resume
+        if result.get("cv_score") is not None:
+            result["cv_score"] = max(0, min(100, int(result["cv_score"])))
+        if result.get("quality_score") is not None:
+            result["quality_score"] = max(0, min(100, int(result["quality_score"])))
+        # 确保关键字段非空
+        if not result.get("key_skills"):
+            result["key_skills"] = []
+        if not result.get("gap"):
+            result["gap"] = "待分析"
+        if not result.get("advice"):
+            result["advice"] = "建议进一步了解岗位详情"
+        if not result.get("summary"):
+            result["summary"] = "评分完成"
+        if not result.get("quality_notes"):
+            result["quality_notes"] = "评分完成"
+        return result
+    except (json.JSONDecodeError, ValueError):
+        return {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": raw[:200] if raw else "评分失败", "quality_notes": "解析失败", "has_resume": has_resume}
+    except Exception as e:
+        return {"cv_score": None, "quality_score": None, "key_skills": [], "gap": "", "advice": "", "summary": f"评分异常: {str(e)[:100]}", "quality_notes": f"异常: {str(e)[:50]}", "has_resume": has_resume}

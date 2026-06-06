@@ -20,11 +20,10 @@ from .routes.settings import router as settings_router
 from .routes.system import router as system_router
 from .routes.debug import router as debug_router
 from .core.websocket import ws_manager
-from .core.monitor import chat_monitor
 from .core.scheduler import auto_scheduler
 from .core.database import get_db, init_db
 from .core import state
-from boss_state import (
+from boss_app.models.application import (
     reconcile_application_stats,
     deduplicate_applications,
     compute_dedup_key,
@@ -47,12 +46,15 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 
+_PUBLIC_PATHS = {"/", "/ws", "/api/health"}
+_PUBLIC_PREFIXES = ("/static",)
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """API 接口认证中间件：所有 /api/* 请求需要携带有效 Token。"""
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        # 放行：首页、静态资源、WebSocket
-        if (path == "/" or path.startswith("/static") or path == "/ws"):
+        if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES):
             return await call_next(request)
         if path.startswith("/api/"):
             auth = request.headers.get("Authorization", "")
@@ -145,6 +147,14 @@ async def on_startup():
         db.commit()
     except Exception as e:
         print(f"[启动] 会话清理失败: {e}")
+    # 自动清理超过7天的回收站
+    try:
+        from .models.application import purge_old_trashes
+        purged = purge_old_trashes(7)
+        if purged > 0:
+            print(f"[启动] 清理回收站: {purged} 条过期记录")
+    except Exception as e:
+        print(f"[启动] 回收站清理失败: {e}")
     # 启动定时调度器（如果已启用）
     try:
         from .models.settings import get_setting
@@ -153,7 +163,7 @@ async def on_startup():
             print("[启动] 定时调度器已启动")
     except Exception as e:
         print(f"[启动] 调度器启动失败: {e}")
-    print(f"\n🚀 BOSS直聘自动化控制台: http://127.0.0.1:8010")
+    print(f"\n[启动] BOSS直聘自动化控制台: http://127.0.0.1:8010")
     print(f"   API Token: {API_TOKEN[:6]}****")
     print(f"   Token 文件: {API_TOKEN_FILE}")
 

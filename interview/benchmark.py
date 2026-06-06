@@ -62,7 +62,8 @@ conn.close()
 import sys as _sys
 
 _sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from boss_state import get_setting, init_db
+from boss_app.models.settings import get_setting
+from boss_app.core.database import init_db
 
 init_db()
 key = get_setting("ai_api_key") or ""

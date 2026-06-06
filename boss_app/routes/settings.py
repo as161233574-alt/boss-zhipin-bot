@@ -1,11 +1,12 @@
 """设置相关 API 路由。
 
-包含设置读写、投递转化漏斗统计、数据一致性修复等接口。
+包含设置读写、投递转化漏斗统计、数据一致性修复、简历上传等接口。
 """
 
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
 from ..core.websocket import ws_manager
@@ -20,11 +21,13 @@ from ..models.conversation import list_active_conversations
 from ..models.settings import (
     get_setting,
     set_setting,
+    set_settings_bulk,
     get_all_settings,
     get_daily_stats,
     get_stats_range,
     get_funnel_stats,
 )
+from ..services.resume_parser import parse_resume_file
 
 router = APIRouter()
 
@@ -58,6 +61,11 @@ class SettingsUpdate(BaseModel):
     auto_apply_threshold: Optional[str] = None  # 自动投递最低综合分阈值
     auto_apply_hr_active_required: Optional[str] = None  # 自动投递是否要求HR活跃
     filter_inactive_hr: Optional[str] = None  # 过滤3天以上不活跃HR岗位
+    experience_min: Optional[str] = None  # 最低工作经验(年)
+    experience_max: Optional[str] = None  # 最高工作经验(年)
+    salary_min: Optional[str] = None  # 最低薪资
+    salary_max: Optional[str] = None  # 最高薪资
+    salary_unit: Optional[str] = None  # 薪资单位(K/元/天)
 
 
 # ══════════════════════════════════════
@@ -88,6 +96,33 @@ async def update_settings(req: SettingsUpdate):
             updates[k] = str(v)
     await ws_manager.broadcast({"type": "settings_updated", "updates": updates})
     return {"status": "ok", "updated": updates}
+
+
+class SmartGreetingRequest(BaseModel):
+    job_title: str
+    company: str
+    salary: Optional[str] = ""
+    experience: Optional[str] = ""
+    education: Optional[str] = ""
+    job_description: Optional[str] = ""
+
+
+@router.post("/api/settings/smart-greeting")
+def generate_smart_greeting(req: SmartGreetingRequest):
+    """生成智能打招呼内容。"""
+    from ..services.replier import generate_smart_greeting
+
+    resume_summary = get_setting("resume_summary", "")
+    greeting = generate_smart_greeting(
+        job_title=req.job_title,
+        company=req.company,
+        salary=req.salary,
+        experience=req.experience,
+        education=req.education,
+        resume_summary=resume_summary,
+        job_description=req.job_description,
+    )
+    return {"greeting": greeting}
 
 
 # ══════════════════════════════════════
@@ -130,3 +165,75 @@ def get_trend(days: int = 7):
 def get_funnel():
     """返回转化漏斗数据。"""
     return get_funnel_stats()
+
+
+# ══════════════════════════════════════
+#  简历上传
+# ══════════════════════════════════════
+
+# 简历文件大小限制：5MB
+MAX_RESUME_SIZE = 5 * 1024 * 1024
+ALLOWED_RESUME_EXT = {".pdf", ".txt", ".md"}
+
+
+@router.post("/api/settings/resume/upload")
+async def upload_resume(file: UploadFile = File(...)):
+    """上传简历文件（PDF/TXT/MD），自动解析并写入 resume_summary。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in ALLOWED_RESUME_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型 {suffix}, 仅支持 {', '.join(ALLOWED_RESUME_EXT)}",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_RESUME_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大 ({len(content)//1024}KB), 上限 {MAX_RESUME_SIZE//1024//1024}MB",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    try:
+        result = parse_resume_file(content, file.filename)
+    except Exception as e:
+        print(f"[简历] 解析失败: {e}")
+        raise HTTPException(status_code=422, detail="简历解析失败，请检查文件格式后重试")
+
+    if not result["summary"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"未能从简历中提取关键信息 (文本长度 {result['text_length']})",
+        )
+
+    set_settings_bulk({
+        "resume_summary": result["summary"],
+        "resume_full_text": result["full_text"],
+        "resume_filename": file.filename,
+        "resume_text_length": str(result["text_length"]),
+    })
+
+    return {
+        "status": "ok",
+        "filename": file.filename,
+        "text_length": result["text_length"],
+        "summary_length": len(result["summary"]),
+        "summary_preview": result["summary"][:200],
+        "full_text_length": len(result["full_text"]),
+    }
+
+
+@router.delete("/api/settings/resume")
+def delete_resume():
+    """清除已上传的简历。"""
+    set_settings_bulk({
+        "resume_summary": "",
+        "resume_full_text": "",
+        "resume_filename": "",
+        "resume_text_length": "0",
+    })
+    return {"status": "ok"}

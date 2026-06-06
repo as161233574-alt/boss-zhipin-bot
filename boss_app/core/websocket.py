@@ -8,6 +8,8 @@ from typing import List
 
 from fastapi import WebSocket
 
+MAX_WS_CLIENTS = 10
+
 
 class WebSocketManager:
     """管理所有 WebSocket 客户端连接。"""
@@ -16,7 +18,10 @@ class WebSocketManager:
         self.clients: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket) -> None:
-        """接受并注册一个新的 WebSocket 连接。"""
+        """接受并注册一个新的 WebSocket 连接。超过上限时拒绝。"""
+        if len(self.clients) >= MAX_WS_CLIENTS:
+            await websocket.close(code=4003, reason="连接数已达上限")
+            return
         await websocket.accept()
         self.clients.append(websocket)
 

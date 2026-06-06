@@ -3,6 +3,7 @@
 从 boss_state.py 提取的应用相关函数。
 """
 
+import json
 import sqlite3
 from typing import List, Optional
 
@@ -102,7 +103,7 @@ def get_application_by_url(url: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
+def update_application_from_job(app_id: int, job: dict) -> None:
     """用本次搜索结果刷新已有岗位；空值不覆盖旧值。"""
     fields = {
         "job_title": job.get("title", ""),
@@ -129,22 +130,19 @@ def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
             updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         params,
     )
-    # 用最终存储的字段值重新计算 dedup_key（避免新旧值不一致）
-    existing = get_application(app_id)
-    if existing:
-        final_key = compute_dedup_key({
-            "title": existing.get("job_title", ""),
-            "company": existing.get("company", ""),
-            "city": existing.get("city", ""),
-            "salary": existing.get("salary", ""),
-        })
-        if final_key:
-            try:
-                db.execute("UPDATE applications SET dedup_key=? WHERE id=?", (final_key, app_id))
-            except sqlite3.IntegrityError:
-                pass  # 唯一索引冲突说明已有相同key的记录，保持当前key不变
+    # 用 job 数据计算 dedup_key（新值非空则用新值，否则保持旧值由 CASE WHEN 处理）
+    final_key = compute_dedup_key({
+        "title": job.get("title", ""),
+        "company": job.get("company", ""),
+        "city": job.get("city", ""),
+        "salary": job.get("salary", ""),
+    })
+    if final_key:
+        try:
+            db.execute("UPDATE applications SET dedup_key=? WHERE id=?", (final_key, app_id))
+        except sqlite3.IntegrityError:
+            pass  # 唯一索引冲突说明已有相同key的记录，保持当前key不变
     db.commit()
-    return get_application(app_id)
 
 
 def list_applications(
@@ -321,12 +319,14 @@ def soft_delete_applications(app_ids: List[int]) -> int:
     )
     count = row.rowcount
     if count > 0:
-        # 同步删除关联收藏
+        # 同步删除关联收藏（批量）
         urls = db.execute(
             f"SELECT job_url FROM applications WHERE id IN ({placeholders})", app_ids
         ).fetchall()
-        for r in urls:
-            db.execute("DELETE FROM shortlists WHERE job_url=?", (r["job_url"],))
+        if urls:
+            url_list = [r["job_url"] for r in urls]
+            ph = ",".join("?" * len(url_list))
+            db.execute(f"DELETE FROM shortlists WHERE job_url IN ({ph})", url_list)
         _log_delete(db, "batch", count, ",".join(str(i) for i in app_ids))
         db.commit()
     return count
@@ -417,6 +417,8 @@ def get_trash_count() -> int:
 def deduplicate_applications() -> dict:
     """清理历史重复数据：按 dedup_key 分组，每组保留 id 最小的记录，其余软删除。"""
     db = get_db()
+    # 该操作可能耗时较长，提升本连接的 busy_timeout 避免被锁住
+    db.execute("PRAGMA busy_timeout=30000")
     total = db.execute("SELECT COUNT(*) FROM applications WHERE deleted_at IS NULL").fetchone()[0]
     # 找出所有重复组中需要删除的 id
     dup_rows = db.execute(
@@ -441,14 +443,17 @@ def deduplicate_applications() -> dict:
         _log_delete(db, "deduplicate", len(dup_ids), dup_ids, f"清理重复岗位 {len(dup_ids)} 条")
         db.commit()
         removed = len(dup_ids)
-    # 为缺少 dedup_key 的记录补填
+    # 为缺少 dedup_key 的记录补填（批量 executemany，避免 N+1）
     missing = db.execute(
         "SELECT id, job_title, company, city, salary FROM applications WHERE (dedup_key IS NULL OR dedup_key='') AND deleted_at IS NULL"
     ).fetchall()
+    updates = []
     for row in missing:
         key = compute_dedup_key({"title": row[1], "company": row[2], "city": row[3], "salary": row[4]})
         if key:
-            db.execute("UPDATE applications SET dedup_key=? WHERE id=?", (key, row[0]))
+            updates.append((key, row[0]))
+    if updates:
+        db.executemany("UPDATE applications SET dedup_key=? WHERE id=?", updates)
     db.commit()
     return {"total": total, "duplicates_found": removed, "duplicates_removed": removed}
 
@@ -501,22 +506,20 @@ def reconcile_application_stats() -> int:
 
 def update_application_score(app_id: int, score: int, detail: dict):
     """更新岗位评分。"""
-    import json as _json
     db = get_db()
     db.execute(
         "UPDATE applications SET score=?, score_detail=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (score, _json.dumps(detail, ensure_ascii=False), app_id),
+        (score, json.dumps(detail, ensure_ascii=False), app_id),
     )
     db.commit()
 
 
 def update_application_legitimacy(app_id: int, level: str, signals: list):
     """更新岗位真实性标记。"""
-    import json as _json
     db = get_db()
     db.execute(
         "UPDATE applications SET legitimacy=?, legitimacy_signals=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (level, _json.dumps(signals, ensure_ascii=False), app_id),
+        (level, json.dumps(signals, ensure_ascii=False), app_id),
     )
     db.commit()
 
@@ -527,17 +530,38 @@ def get_application_for_scoring(app_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+_legitimacy_cache = {"data": None, "ts": 0.0}
+_LEGITIMACY_TTL = 30.0
+
 def get_all_active_jobs_for_legitimacy() -> List[dict]:
-    """获取所有活跃岗位用于真实性检测（去重后）。"""
+    """获取所有活跃岗位用于真实性检测（去重后，只取必要列，30秒缓存）。"""
+    import time
+    now = time.time()
+    if _legitimacy_cache["data"] is not None and now - _legitimacy_cache["ts"] < _LEGITIMACY_TTL:
+        return _legitimacy_cache["data"]
     rows = get_db().execute(
-        """SELECT a.* FROM applications a
+        """SELECT a.company, a.job_title FROM applications a
            INNER JOIN (
                SELECT MAX(id) as mid FROM applications
                WHERE deleted_at IS NULL
                GROUP BY CASE WHEN dedup_key IS NULL OR dedup_key='' THEN '_row_'||id ELSE dedup_key END
            ) u ON a.id = u.mid"""
     ).fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    _legitimacy_cache["data"] = result
+    _legitimacy_cache["ts"] = now
+    return result
+
+
+def update_application_fields(app_id: int, fields: dict):
+    """通用字段更新：UPDATE applications SET k1=v1, k2=v2, ... WHERE id=?。"""
+    if not fields:
+        return
+    db = get_db()
+    sets = ", ".join(f"{k}=?" for k in fields)
+    vals = list(fields.values()) + [app_id]
+    db.execute(f"UPDATE applications SET {sets}, updated_at=CURRENT_TIMESTAMP WHERE id=?", vals)
+    db.commit()
 
 
 def update_application_hr_activity(app_id: int, hr_activity_score: int):

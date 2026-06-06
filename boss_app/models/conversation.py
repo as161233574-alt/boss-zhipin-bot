@@ -38,9 +38,9 @@ def get_conversation(conv_id: int) -> Optional[dict]:
     return _row_to_dict(get_db().execute("SELECT * FROM conversations WHERE id=?", (conv_id,)).fetchone())
 
 
-def list_active_conversations() -> List[dict]:
+def list_active_conversations(limit: int = 200) -> List[dict]:
     return _rows_to_list(
-        get_db().execute("SELECT * FROM conversations WHERE status!='closed' ORDER BY updated_at DESC").fetchall()
+        get_db().execute("SELECT * FROM conversations WHERE status!='closed' ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
     )
 
 
@@ -75,22 +75,19 @@ def update_conversation_status(conv_id: int, status: str):
 
 
 def update_conversation_interest(conv_id: int, level: str, emotion: str = "", dialogue_stage: str = ""):
-    db = get_db()
+    fields, vals = {}, {}
     if level:
-        db.execute(
-            "UPDATE conversations SET interest_level=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (level, conv_id),
-        )
+        vals["interest_level"] = level
     if emotion:
-        db.execute(
-            "UPDATE conversations SET emotion=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (emotion, conv_id),
-        )
+        vals["emotion"] = emotion
     if dialogue_stage:
-        db.execute(
-            "UPDATE conversations SET dialogue_stage=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (dialogue_stage, conv_id),
-        )
+        vals["dialogue_stage"] = dialogue_stage
+    if not vals:
+        return
+    db = get_db()
+    sets = ", ".join(f"{k}=?" for k in vals)
+    params = list(vals.values()) + [conv_id]
+    db.execute(f"UPDATE conversations SET {sets}, updated_at=CURRENT_TIMESTAMP WHERE id=?", params)
     db.commit()
 
 
@@ -112,7 +109,7 @@ def mark_phone_shared(conv_id: int):
     get_db().commit()
 
 
-def get_wechat_exchanges() -> List[dict]:
+def get_wechat_exchanges(limit: int = 200) -> List[dict]:
     """返回所有已获取到微信号的会话，包含岗位详情。"""
     return _rows_to_list(
         get_db()
@@ -123,7 +120,9 @@ def get_wechat_exchanges() -> List[dict]:
                FROM conversations c
                LEFT JOIN applications a ON c.application_id = a.id
                WHERE c.hr_wechat IS NOT NULL AND c.hr_wechat != ''
-               ORDER BY c.wechat_shared_at DESC"""
+               ORDER BY c.wechat_shared_at DESC
+               LIMIT ?""",
+            (limit,),
         )
         .fetchall()
     )

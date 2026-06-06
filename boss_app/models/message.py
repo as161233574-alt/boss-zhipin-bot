@@ -57,7 +57,8 @@ def replace_conversation_messages(conversation_id: int, messages: List[dict]):
             (conversation_id,),
         ).fetchall()
     }
-    db.execute("DELETE FROM messages WHERE conversation_id=?", (conversation_id,))
+    # 收集要插入的数据，先构建再批量操作，避免 DELETE 后 INSERT 失败导致数据丢失
+    rows = []
     for msg in messages:
         sender = msg.get("sender", "hr")
         content = (msg.get("content") or "").strip()
@@ -65,11 +66,18 @@ def replace_conversation_messages(conversation_id: int, messages: List[dict]):
         if not content:
             continue
         ai_generated = 1 if sender == "me" and content in old_ai else 0
-        db.execute(
+        rows.append((conversation_id, sender, content, delivery_status, ai_generated))
+
+    try:
+        db.execute("DELETE FROM messages WHERE conversation_id=?", (conversation_id,))
+        db.executemany(
             "INSERT INTO messages (conversation_id, sender, content, delivery_status, ai_generated) VALUES (?, ?, ?, ?, ?)",
-            (conversation_id, sender, content, delivery_status, ai_generated),
+            rows,
         )
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def get_last_hr_message(conversation_id: int) -> Optional[dict]:

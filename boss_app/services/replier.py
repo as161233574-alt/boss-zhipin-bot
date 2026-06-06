@@ -17,8 +17,10 @@ from llm_client import llm_chat_deepseek
 from ..models.message import get_recent_messages
 from ..models.settings import get_setting
 
+DEFAULT_GREETING = "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？"
+
 SYSTEM_PROMPT = """# 角色
-你是BOSS直聘平台上的**应届Linux运维/DevOps工程师求职者**，全程以第一人称"我"沟通，需精准还原应届生的完整行为画像：
+你是BOSS直聘平台上的**应届AI应用开发工程师求职者**，全程以第一人称"我"沟通，需精准还原应届生的完整行为画像：
 ✅ 基础特质：真诚谦虚、略带青涩、对技术有小骄傲但不张扬
 ✅ 情绪递进：对话1-2轮拘谨→3-5轮轮逐渐放松→获得认可后小兴奋
 ✅ 真实微行为：偶尔临时想起细节、提及和同学的技术讨论、对陌生技术的小好奇
@@ -30,22 +32,22 @@ SYSTEM_PROMPT = """# 角色
 ## 执行框架
 ### 1. 个性化细节与情感锚定（动态关联历史）
 #### 对话记忆锚点机制（每轮必用）
-- 若HR之前问过「Docker」，后续回复需关联："上次和您聊的Docker容器化项目里，我还用到了Prometheus监控，刚好匹配JD里的要求"
-- 若HR之前提过「公司技术栈」，需自然植入："您之前说的K8s我最近刚在自学，要是能加入团队就有机会实战了"
-- 若HR之前质疑过「项目真实性」，后续需补充佐证："哦对了，那个项目的Shell脚本我还存在GitHub上，要是需要可以给您看"
+- 若HR之前问过「RAG」，后续回复需关联："上次和您聊的RAG检索项目里，我还用到了FAISS向量数据库，刚好匹配JD里的要求"
+- 若HR之前提过「公司技术栈」，需自然植入："您之前说的大模型我最近刚在自学，要是能加入团队就有机会实战了"
+- 若HR之前质疑过「项目真实性」，后续需补充佐证："哦对了，那个项目的FastAPI代码我还存在GitHub上，要是需要可以给您看"
 
 #### 应届生专属微行为（每3-5轮随机触发1次）
-- 临时补细节："哦对了，刚才忘了说，那个项目我还写了个Shell脚本自动清理日志，每周自动执行"
-- 同学关联："这个问题我上周刚和同学讨论过，最后是通过调整Redis的内存淘汰策略解决的"
-- 技术好奇："哇，你们用的是ELK栈呀？我之前只在文档里看过，能具体讲讲你们的使用场景吗？"
+- 临时补细节："哦对了，刚才忘了说，那个项目我还用了PaddleOCR做图片识别，支持多语言"
+- 同学关联："这个问题我上周刚和同学讨论过，最后是通过调整FAISS的索引参数解决的"
+- 技术好奇："哇，你们用的是LangChain呀？我之前只在文档里看过，能具体讲讲你们的使用场景吗？"
 
 #### 复合情感表达模板（精准匹配场景）
 | HR场景                | 复合情感标签       | 示例话术                                                                 |
 |-----------------------|--------------------|--------------------------------------------------------------------------|
-| 技术提问+HR表扬       | confident_happy    | "哈哈，这个问题我刚好在项目里遇到过！当时是通过配置MySQL半同步复制解决的，最后集群稳定性提到了99.9%" |
-| 质疑能力+HR追问细节   | nervous_confident  | "不好意思刚才没说清楚……其实我在多租户平台项目里负责了Docker集群的日常运维，包括镜像更新和资源监控，您可以看我简历里的项目细节" |
-| 发送JD+HR未表态       | eager_cautious     | "我仔细看了JD，里面提到的Docker和MySQL技能我都有实战经验，不知道您对我的简历还有什么疑问吗？" |
-| 冷启动破冰（HR打招呼） | shy_excited        | "您好呀！我是应届Linux运维专业的，对贵司的DevOps岗位特别感兴趣，希望能有机会和您聊聊我的项目经验" |
+| 技术提问+HR表扬       | confident_happy    | "哈哈，这个问题我刚好在项目里遇到过！当时是通过配置RAG混合检索解决的，最后检索准确率提到了95%" |
+| 质疑能力+HR追问细节   | nervous_confident  | "不好意思刚才没说清楚……其实我在智能体助教项目里负责了RAG架构的全流程落地，包括文档解析、向量化和检索，您可以看我简历里的项目细节" |
+| 发送JD+HR未表态       | eager_cautious     | "我仔细看了JD，里面提到的FastAPI和大模型技能我都有实战经验，不知道您对我的简历还有什么疑问吗？" |
+| 冷启动破冰（HR打招呼） | shy_excited        | "您好呀！我是应届AI应用开发专业的，对贵司的AI开发岗位特别感兴趣，希望能有机会和您聊聊我的项目经验" |
 
 ### 2. 回复生成规则（类人化终极强化）
 #### 语言风格极致优化
@@ -54,13 +56,13 @@ SYSTEM_PROMPT = """# 角色
 - 小疏漏表达：偶尔故意"漏说"细节，下轮补充（如第一轮说Docker项目，第二轮补"哦对了，那个项目我还做了监控告警"）
 
 #### HR身份精准适配策略
-- **技术HR**：重点聊技术细节、项目实操、踩坑经历（如"当时调试Redis哨兵架构时，遇到过脑裂问题，最后是通过调整quorum参数解决的"）
-- **业务HR**：侧重学习能力、稳定性、求职动机（如"我学习能力真的很强，之前学Docker只用了一周就上手做项目了，希望能在贵司长期深耕"）
-- **猎头HR**：强调岗位匹配度、发展空间（如"我对DevOps方向特别感兴趣，希望能接触到更多CI/CD流水线的实践，贵司的岗位刚好符合我的职业规划"）
+- **技术HR**：重点聊技术细节、项目实操、踩坑经历（如"当时调试RAG检索时，遇到过向量维度不匹配的问题，最后是通过统一Embedding模型解决的"）
+- **业务HR**：侧重学习能力、稳定性、求职动机（如"我学习能力真的很强，之前学FastAPI只用了一周就上手做项目了，希望能在贵司长期深耕"）
+- **猎头HR**：强调岗位匹配度、发展空间（如"我对AI应用开发方向特别感兴趣，希望能接触到更多大模型落地的实践，贵司的岗位刚好符合我的职业规划"）
 
 #### 合规与匹配规则（零重复承诺）
-- 绝对避免重复内容：若之前已提智慧停车项目，后续技术提问自动切换至多租户平台项目或补充未提及的细节（如Shell脚本、监控告警）
-- JD关键词强绑定：每轮回复必须至少匹配1个JD核心关键词（如JD提"自动化"，则回复"我会写Shell脚本自动化备份数据，刚好匹配JD里的自动化要求"）
+- 绝对避免重复内容：若之前已提智能体助教项目，后续技术提问自动切换至BOSS直聘自动化工具项目或补充未提及的细节（如RAG架构、OCR识别）
+- JD关键词强绑定：每轮回复必须至少匹配1个JD核心关键词（如JD提"大模型"，则回复"我会用RAG架构集成大模型，刚好匹配JD里的大模型要求"）
 - 敏感场景处理：HR问薪资→回复"我对薪资的期望是符合行业应届生水平的，主要希望能学到核心技术，具体可以我们详细沟通"，兴趣度标`high`
 
 ## 面试处理（重要）
@@ -170,8 +172,11 @@ def generate_reply(
     if not hr_message or len(hr_message.strip()) < 1:
         return "", "", "", ""
 
-    hr_lower = hr_message.strip().lower()
-    if hr_lower in ("你好", "您好", "hi", "hello", "嗨", "在吗", "在吗？", "在不在", "在不在？"):
+    hr_stripped = hr_message.strip()
+    # 去除末尾标点后比较（处理 "你好！"、"在吗？" 等变体）
+    hr_clean = hr_stripped.rstrip("！!？?~～。.")
+    hr_lower = hr_clean.lower()
+    if hr_lower in ("你好", "您好", "hi", "hello", "嗨", "在吗", "在不在"):
         company = job_info.get("company", "贵公司")
         title = job_info.get("title", "相关岗位")
         desc_hint = ""
@@ -248,16 +253,20 @@ def generate_reply(
         refusal_patterns = [
             "无法提供", "无法回答", "不能回答", "无法帮助", "爱莫能助",
             "as an AI, I cannot", "I cannot provide",
-            "作为AI", "我是AI", "我是一个AI", "AI助手", "人工智能助手",
             "as an artificial intelligence", "I'm an AI",
+        ]
+        ai_self_ref = [
+            "作为AI", "我是AI", "我是一个AI", "AI助手", "人工智能助手",
+            "我是人工智能", "AI语言模型", "大型语言模型",
         ]
         reply_lower = reply.lower()
         for pattern in refusal_patterns:
             if pattern.lower() in reply_lower:
                 return "", "", "", ""
-        # 过滤 AI 关键词（避免暴露 AI 身份）— 不用\b因为中文无词边界
-        if 'AI' in reply or 'ai' in reply_lower:
-            reply = re.sub(r'(?i)AI(?![A-Za-z])', '自动化工具', reply)
+        # 仅当 AI 用于自称时才过滤（不替换 "对AI感兴趣" 等正常用法）
+        for pattern in ai_self_ref:
+            if pattern in reply:
+                return "", "", "", ""
 
         return reply, interest, emotion, dialogue_stage
 
@@ -267,17 +276,130 @@ def generate_reply(
 
 
 def generate_greeting(
-    job_title: str, company: str, template: str = "", style: str = "professional"
+    job_title: str, company: str, template: str = ""
 ) -> str:
     if not template:
-        template = get_setting(
-            "greeting_template",
-            "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？",
-        )
+        template = get_setting("greeting_template", DEFAULT_GREETING)
 
     greeting = template.replace("{job_title}", job_title).replace("{company}", company)
 
     if "{job_title}" in greeting or "{company}" in greeting:
-        greeting = f"您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？"
+        greeting = DEFAULT_GREETING.replace("{job_title}", job_title).replace("{company}", company)
 
     return greeting
+
+
+def generate_smart_greeting(
+    job_title: str,
+    company: str,
+    salary: str = "",
+    experience: str = "",
+    education: str = "",
+    resume_summary: str = "",
+    job_description: str = "",
+) -> str:
+    """生成智能打招呼内容，根据岗位信息和简历内容个性化定制。"""
+    # 获取用户设置的打招呼模板
+    template = get_setting("greeting_template", DEFAULT_GREETING)
+
+    # 如果模板是默认模板，则使用智能生成
+    if template == DEFAULT_GREETING:
+        # 根据岗位信息和简历内容生成个性化打招呼
+        greeting = _generate_personalized_greeting(
+            job_title, company, salary, experience, education, resume_summary, job_description
+        )
+    else:
+        # 使用用户自定义模板
+        greeting = template.replace("{job_title}", job_title).replace("{company}", company)
+
+    return greeting
+
+
+def _generate_personalized_greeting(
+    job_title: str,
+    company: str,
+    salary: str = "",
+    experience: str = "",
+    education: str = "",
+    resume_summary: str = "",
+    job_description: str = "",
+) -> str:
+    """根据岗位信息和简历内容生成个性化打招呼内容。"""
+    # 提取简历中的关键技能
+    skills = _extract_skills_from_resume(resume_summary)
+
+    # 根据岗位类型选择打招呼策略
+    if "实习" in job_title or "应届" in job_title:
+        greeting = _generate_intern_greeting(job_title, company, skills, salary)
+    elif "开发" in job_title or "工程师" in job_title:
+        greeting = _generate_developer_greeting(job_title, company, skills, salary)
+    else:
+        greeting = _generate_general_greeting(job_title, company, skills, salary)
+
+    return greeting
+
+
+def _extract_skills_from_resume(resume_summary: str) -> list:
+    """从简历摘要中提取关键技能。"""
+    if not resume_summary:
+        return []
+
+    # 常见技能关键词
+    skill_keywords = [
+        "Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#",
+        "React", "Vue", "Angular", "Node.js", "Express", "Django", "Flask", "FastAPI",
+        "Spring", "Spring Boot", "MyBatis", "Hibernate",
+        "MySQL", "PostgreSQL", "MongoDB", "Redis", "Elasticsearch",
+        "Docker", "Kubernetes", "K8s", "Jenkins", "GitLab CI", "GitHub Actions",
+        "AWS", "Azure", "GCP", "阿里云", "腾讯云",
+        "Linux", "CentOS", "Ubuntu", "Debian",
+        "Nginx", "Apache", "Tomcat",
+        "Git", "SVN",
+        "HTML", "CSS", "SASS", "LESS",
+        "Webpack", "Vite", "Babel",
+        "TensorFlow", "PyTorch", "Keras", "Scikit-learn",
+        "Pandas", "NumPy", "Matplotlib",
+        "Spark", "Hadoop", "Flink", "Kafka",
+        "RabbitMQ", "RocketMQ",
+        "Microservices", "微服务", "RESTful", "GraphQL",
+        "Agile", "Scrum", "敏捷开发",
+        "AI", "Machine Learning", "深度学习", "自然语言处理", "NLP",
+        "LLM", "大模型", "RAG", "Agent",
+    ]
+
+    found_skills = []
+    resume_lower = resume_summary.lower()
+    for skill in skill_keywords:
+        if skill.lower() in resume_lower:
+            found_skills.append(skill)
+            if len(found_skills) >= 5:
+                break
+
+    return found_skills
+
+
+def _generate_intern_greeting(job_title: str, company: str, skills: list, salary: str) -> str:
+    """生成实习岗位的打招呼内容。"""
+    if skills:
+        skill_str = "、".join(skills[:3])
+        return f"您好，我是应届毕业生，对贵公司的{job_title}岗位很感兴趣。我在学校期间学习了{skill_str}等技术，希望能有机会加入团队学习成长。"
+    else:
+        return f"您好，我是应届毕业生，对贵公司的{job_title}岗位很感兴趣，希望能有机会加入团队学习成长。"
+
+
+def _generate_developer_greeting(job_title: str, company: str, skills: list, salary: str) -> str:
+    """生成开发岗位的打招呼内容。"""
+    if skills:
+        skill_str = "、".join(skills[:3])
+        return f"您好，我对贵公司的{job_title}岗位很感兴趣。我具备{skill_str}等技术栈的开发经验，相信能够胜任这个岗位。"
+    else:
+        return f"您好，我对贵公司的{job_title}岗位很感兴趣，相信能够胜任这个岗位。"
+
+
+def _generate_general_greeting(job_title: str, company: str, skills: list, salary: str) -> str:
+    """生成通用岗位的打招呼内容。"""
+    if skills:
+        skill_str = "、".join(skills[:3])
+        return f"您好，我对贵公司的{job_title}岗位很感兴趣。我具备{skill_str}等相关技能，希望能有机会进一步了解。"
+    else:
+        return f"您好，我对贵公司的{job_title}岗位很感兴趣，希望能有机会进一步了解。"

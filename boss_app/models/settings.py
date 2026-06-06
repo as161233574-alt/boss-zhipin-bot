@@ -15,9 +15,11 @@ from ..core.database import get_db
 
 
 def get_setting(key: str, default: str = "") -> str:
-    """获取设置值。"""
+    """获取设置值。空字符串视为未设置，回退到 default。"""
     row = get_db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    return row["value"] if row else default
+    if not row:
+        return default
+    return row["value"] if row["value"] else default
 
 
 def set_setting(key: str, value: str):
@@ -27,6 +29,17 @@ def set_setting(key: str, value: str):
         (key, value),
     )
     get_db().commit()
+
+
+def set_settings_bulk(pairs: dict[str, str]):
+    """批量设置配置值（单次事务提交）。"""
+    db = get_db()
+    for key, value in pairs.items():
+        db.execute(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (key, value),
+        )
+    db.commit()
 
 
 def get_all_settings() -> dict:
@@ -103,12 +116,15 @@ def get_stats_range(days: int = 7) -> list:
 def get_funnel_stats() -> dict:
     """获取转化漏斗数据：pending → applied → replied → interview。"""
     db = get_db()
-    pending = db.execute(
-        "SELECT COUNT(*) as cnt FROM applications WHERE deleted_at IS NULL AND status='pending'"
-    ).fetchone()["cnt"]
-    applied = db.execute(
-        "SELECT COUNT(*) as cnt FROM applications WHERE deleted_at IS NULL AND status='applied'"
-    ).fetchone()["cnt"]
+    # 合并 applications 统计为单条查询
+    row = db.execute(
+        "SELECT "
+        "SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending, "
+        "SUM(CASE WHEN status='applied' THEN 1 ELSE 0 END) as applied "
+        "FROM applications WHERE deleted_at IS NULL"
+    ).fetchone()
+    pending = row["pending"] or 0
+    applied = row["applied"] or 0
     replied = db.execute(
         "SELECT COUNT(*) as cnt FROM conversations WHERE last_message_from='hr'"
     ).fetchone()["cnt"]
@@ -120,7 +136,7 @@ def get_funnel_stats() -> dict:
         "applied": applied,
         "replied": replied,
         "interview": interview,
-        "apply_rate": round(applied / max(pending + applied, 1) * 100, 1),
-        "reply_rate": round(replied / max(applied, 1) * 100, 1),
-        "interview_rate": round(interview / max(replied, 1) * 100, 1),
+        "apply_rate": min(round(applied / max(pending + applied, 1) * 100, 1), 100),
+        "reply_rate": min(round(replied / max(applied, 1) * 100, 1), 100),
+        "interview_rate": min(round(interview / max(replied, 1) * 100, 1), 100),
     }

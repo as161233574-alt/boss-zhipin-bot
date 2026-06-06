@@ -5,34 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOSS直聘自动化控制台</title>
 <style>
-:root{--accent:#1a1a2e;--green:#166534;--orange:#92400e;--red:#991b1b;--text:#0f0f0f;--text-2:#404040;--text-3:#737373;--surface:#fff;--border:#e5e5e5;--bg:#fafafa;--sidebar-bg:#f5f5f5;--hover:#f0f0f0;--font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+:root{--accent:#1a1a2e;--green:#166534;--orange:#92400e;--red:#991b1b;--text:#0f0f0f;--text-2:#404040;--text-3:#737373;--surface:#fff;--border:#e5e5e5;--bg:#fafafa;--sidebar-bg:#f5f5f5;--hover:#f0f0f0;--font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06);--shadow-lg:0 4px 16px rgba(0,0,0,.1)}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:var(--font);background:var(--surface);color:var(--text);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+body{font-family:var(--font);background:var(--surface);color:var(--text);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;overflow:hidden}
 
-.app{display:flex;height:100vh;overflow:hidden}
-.sidebar{width:220px;flex-shrink:0;background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:24px 0}
+.app{display:flex;height:100vh;overflow:hidden;transition:all .2s}
+.sidebar{width:220px;flex-shrink:0;background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:24px 0;transition:width .2s}
 .sidebar-logo{padding:0 20px;margin-bottom:32px}
-.sidebar-logo h1{font-size:15px;font-weight:590;letter-spacing:-.01em}
+.sidebar-logo h1{font-size:15px;font-weight:590;letter-spacing:-.01em;color:var(--text)}
 .sidebar-logo div{font-size:12px;color:var(--text-3);margin-top:4px}
 .sidebar-nav{flex:1;display:flex;flex-direction:column}
-.sidebar-nav a{display:flex;align-items:center;gap:10px;padding:10px 20px;color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;cursor:pointer;border-left:2px solid transparent;transition:background .1s}
-.sidebar-nav a:hover{background:var(--hover);color:var(--text)}
+.sidebar-nav a{display:flex;align-items:center;gap:10px;padding:10px 20px;color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;cursor:pointer;border-left:2px solid transparent;transition:all .15s}
+.sidebar-nav a:hover{background:var(--hover);color:var(--text);padding-left:24px}
 .sidebar-nav a.active{color:var(--text);background:#e5e5e5;border-left-color:var(--accent);font-weight:590}
-.sidebar-nav a .icon{font-size:15px;width:22px;text-align:center;opacity:.6}
+.sidebar-nav a .icon{font-size:15px;width:22px;text-align:center;opacity:.6;transition:opacity .15s}
+.sidebar-nav a:hover .icon{opacity:.8}
+.nav-badge{display:inline-block;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--red);color:#fff;font-size:10px;font-weight:600;text-align:center;line-height:16px;margin-left:4px}
+@keyframes badgePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
 .sidebar-status{padding:16px 20px;border-top:1px solid var(--border);margin-top:auto;display:flex;flex-direction:column;gap:8px}
 .sidebar-status .row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}
-.dot{width:6px;height:6px;border-radius:50%}
-.dot.on{background:var(--green)}
+.dot{width:6px;height:6px;border-radius:50%;transition:all .3s}
+.dot.on{background:var(--green);box-shadow:0 0 6px rgba(22,101,52,.4)}
 .dot.off{background:var(--border)}
 
-.main{flex:1;overflow-y:auto;padding:24px 32px;background:var(--surface)}
+.main{flex:1;overflow-y:auto;padding:24px 32px;background:var(--surface);scroll-behavior:smooth}
 .main-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border)}
-.main-header h2{font-size:16px;font-weight:590;letter-spacing:-.01em}
+.main-header h2{font-size:16px;font-weight:590;letter-spacing:-.01em;color:var(--text)}
 
 .tab{display:none}
 .tab.active{display:block}
 
-.btn{padding:6px 14px;border-radius:4px;font-size:13px;font-weight:500;cursor:pointer;border:1px solid var(--border);transition:background .1s;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;line-height:1.5}
+.btn{padding:6px 14px;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;border:1px solid var(--border);transition:all .15s;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;line-height:1.5;box-shadow:var(--shadow)}
+.btn:active:not(:disabled){transform:scale(.97)}
 .btn:disabled{opacity:.35;cursor:not-allowed}
 .btn-primary{background:var(--text);color:#fff;border-color:var(--text)}
 .btn-primary:hover:not(:disabled){background:#2a2a2a}
@@ -51,32 +55,36 @@ body{font-family:var(--font);background:var(--surface);color:var(--text);font-si
 
 .section{border-bottom:1px solid var(--border);padding:0 0 20px 0;margin-bottom:20px}
 .section:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
-.section h3{font-size:14px;font-weight:590;margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em}
+.section h3{font-size:14px;font-weight:590;margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2)}
 
-.search-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.search-bar input,.search-bar select{background:var(--surface);border:1px solid var(--border);padding:7px 10px;color:var(--text);font-size:14px;outline:none;font-family:var(--font);border-radius:4px;transition:border-color .1s}
-.search-bar input:focus,.search-bar select:focus{border-color:var(--text)}
+.search-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:var(--sidebar-bg);border-radius:var(--radius);border:1px solid var(--border)}
+.search-bar input,.search-bar select{background:var(--surface);border:1px solid var(--border);padding:7px 10px;color:var(--text);font-size:14px;outline:none;font-family:var(--font);border-radius:var(--radius);transition:border-color .15s,box-shadow .15s}
+.search-bar input:focus,.search-bar select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(26,26,46,.08)}
 .search-bar input{flex:1;min-width:160px}
 .search-bar input::placeholder{color:var(--text-3)}
 .search-bar select{min-width:80px;cursor:pointer}
 
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:0;border:1px solid var(--border);margin-bottom:20px}
-.stat-card{padding:16px 12px;text-align:center;border-right:1px solid var(--border)}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:0;border:1px solid var(--border);margin-bottom:20px;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.stat-card{padding:16px 12px;text-align:center;border-right:1px solid var(--border);background:var(--surface);transition:background .15s}
 .stat-card:last-child{border-right:none}
-.stat-card .num{font-size:26px;font-weight:590;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.stat-card:hover{background:var(--hover)}
+.stat-card .num{font-size:26px;font-weight:590;letter-spacing:-.03em;font-variant-numeric:tabular-nums;transition:transform .2s}
+.stat-card:hover .num{transform:scale(1.05)}
 .stat-card .lbl{font-size:11px;color:var(--text-3);margin-top:4px;text-transform:uppercase;letter-spacing:.04em}
 
-.jobs-grid{display:flex;flex-direction:column;border-top:1px solid var(--border)}
-.job-card{padding:14px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;transition:background .08s}
-.job-card:hover{background:var(--hover)}
+.jobs-grid{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.job-card{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;transition:background .12s,box-shadow .12s}
+.job-card:last-child{border-bottom:none}
+.job-card:hover{background:var(--hover);box-shadow:inset 3px 0 0 var(--accent)}
 .job-card .title{font-size:14px;font-weight:590;min-width:180px;flex-shrink:0;letter-spacing:-.01em}
 .job-card .title a{color:var(--text);text-decoration:none}
-.job-card .title a:hover{text-decoration:underline}
-.job-card .meta{font-size:12px;color:var(--text-3);display:flex;gap:10px;flex-wrap:wrap;flex:1;min-width:0}
+.job-card .title a:hover{text-decoration:underline;color:var(--accent)}
+.job-card .meta{font-size:12px;color:var(--text-3);display:flex;gap:10px;flex-wrap:wrap;flex:1;min-width:0;align-items:center}
 .job-card .salary{color:var(--red);font-weight:590;white-space:nowrap}
 .job-card .actions{display:flex;gap:6px;flex-shrink:0;margin-left:auto}
 
-.badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:510;border:1px solid var(--border)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:510;border:1px solid var(--border);transition:transform .15s}
+.badge:hover{transform:scale(1.05)}
 .badge-pending{border-color:var(--border);color:var(--text-3)}
 .badge-applied{border-color:var(--text);color:var(--text)}
 .badge-replied{border-color:var(--green);color:var(--green)}
@@ -84,75 +92,79 @@ body{font-family:var(--font);background:var(--surface);color:var(--text);font-si
 .badge-failed{border-color:var(--red);color:var(--red)}
 .badge-missing_url{border-color:var(--orange);color:var(--orange)}
 
-table{width:100%;border-collapse:collapse;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
-th{color:var(--text-3);font-weight:500;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+th{color:var(--text-3);font-weight:500;font-size:11px;letter-spacing:.04em;text-transform:uppercase;background:var(--sidebar-bg)}
 td a{color:var(--text);text-decoration:none}
-td a:hover{text-decoration:underline}
+td a:hover{text-decoration:underline;color:var(--accent)}
+tr:hover td{background:var(--hover)}
 
-.chat-container{display:flex;height:70vh;border:1px solid var(--border);background:var(--surface)}
-.chat-list{width:260px;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--sidebar-bg)}
-.chat-list-items{flex:1;overflow-y:auto}
-.chat-list-item{padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .08s}
-.chat-list-item:hover{background:var(--surface)}
-.chat-list-item.active{background:var(--surface)}
-.chat-list-item .name{font-size:13px;font-weight:590}
+.chat-container{display:flex;height:70vh;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.chat-list{width:260px;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--sidebar-bg);overflow:hidden}
+.chat-list-items{flex:1;overflow-y:auto;scroll-behavior:smooth}
+.chat-list-item{padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:all .12s}
+.chat-list-item:hover{background:var(--surface);padding-left:18px}
+.chat-list-item.active{background:var(--surface);border-left:3px solid var(--accent)}
+.chat-list-item .name{font-size:13px;font-weight:590;transition:color .15s}
+.chat-list-item:hover .name{color:var(--accent)}
 .chat-list-item .preview{font-size:12px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-list-item .unread{font-size:11px;font-weight:590;color:var(--accent);margin-left:6px}
-.chat-pane{flex:1;display:flex;flex-direction:column}
-.chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.6}
-.msg-bubble{max-width:80%}
-.msg-hr{align-self:flex-start;color:var(--text)}
-.msg-me{align-self:flex-end;color:var(--text-2);padding-left:28px}
-.msg-me.ai{color:var(--text-2)}
-.msg-label{font-size:11px;color:var(--text-3);margin-bottom:2px;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
-.chat-input-area{padding:10px 14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:0}
-.quick-replies{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
-.input-wrapper{display:flex;gap:8px;align-items:flex-end}
-.input-wrapper textarea{flex:1;border:1px solid var(--border);padding:10px 12px;color:var(--text);font-size:14px;resize:none;outline:none;min-height:40px;max-height:120px;font-family:var(--font);border-radius:8px;transition:border-color .2s;line-height:1.5}
-.input-wrapper textarea:focus{border-color:var(--accent)}
-.input-actions{display:flex;flex-direction:column;gap:4px}
-.chat-header{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.chat-list-item .unread{font-size:11px;font-weight:590;color:var(--accent);margin-left:6px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:10px}
+.chat-pane{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.6;scroll-behavior:smooth}
+.msg-bubble{max-width:80%;padding:8px 12px;border-radius:var(--radius);transition:transform .15s}
+.msg-bubble:hover{transform:translateY(-1px)}
+.msg-hr{align-self:flex-start;color:var(--text);background:var(--sidebar-bg)}
+.msg-me{align-self:flex-end;color:var(--text-2);padding-left:28px;background:#f0f0f0}
+.msg-me.ai{color:var(--text-2);background:#e8f4e8}
+.msg-label{font-size:11px;color:var(--text-3);margin-bottom:2px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;user-select:none}
+.chat-input-area{padding:10px 14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:0;background:var(--sidebar-bg)}
+.quick-replies{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;padding:4px 0}
+.input-wrapper{display:flex;gap:8px;align-items:flex-end;flex:1}
+.input-wrapper textarea{flex:1;border:1px solid var(--border);padding:10px 12px;color:var(--text);font-size:14px;resize:none;outline:none;min-height:40px;max-height:120px;font-family:var(--font);border-radius:var(--radius);transition:border-color .2s,box-shadow .2s;line-height:1.5}
+.input-wrapper textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(26,26,46,.08)}
+.input-actions{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+.chat-header{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--sidebar-bg)}
 .chat-header .info{font-size:12px}
 .chat-header .name{font-weight:590}
 .chat-header .company{font-size:11px;color:var(--text-3)}
 .msg-date-group{margin-bottom:16px}
-.msg-date-label{text-align:center;font-size:12px;color:var(--text-3);margin-bottom:12px;position:relative;display:flex;align-items:center;gap:12px}
+.msg-date-label{text-align:center;font-size:12px;color:var(--text-3);margin-bottom:12px;position:relative;display:flex;align-items:center;gap:12px;user-select:none}
 .msg-date-label::before,.msg-date-label::after{content:'';flex:1;height:1px;background:var(--border)}
-.msg-content{white-space:pre-wrap;word-break:break-word}
-.msg-meta{display:flex;gap:8px;align-items:center;margin-top:4px}
+.msg-content{white-space:pre-wrap;word-break:break-word;line-height:1.6}
+.msg-meta{display:flex;gap:8px;align-items:center;margin-top:4px;user-select:none}
 .msg-time{font-size:11px;color:var(--text-3)}
 .msg-status{font-size:11px;color:var(--text-3)}
-.chat-list-header{padding:12px;border-bottom:1px solid var(--border);background:var(--surface)}
-.chat-search{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-bottom:8px;outline:none;font-family:var(--font)}
-.chat-search:focus{border-color:var(--accent)}
+.chat-list-header{padding:12px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:1}
+.chat-search{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;margin-bottom:8px;outline:none;font-family:var(--font);transition:border-color .15s,box-shadow .15s}
+.chat-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(26,26,46,.08)}
 .chat-tabs{display:flex;gap:4px;font-size:12px}
-.chat-tabs span{padding:4px 10px;cursor:pointer;border-radius:4px;color:var(--text-3);transition:all .15s}
+.chat-tabs span{padding:4px 10px;cursor:pointer;border-radius:var(--radius);color:var(--text-3);transition:all .15s}
 .chat-tabs span:hover{background:var(--hover);color:var(--text)}
-.chat-tabs span.active{background:var(--accent);color:#fff}
+.chat-tabs span.active{background:var(--accent);color:#fff;box-shadow:var(--shadow)}
 
-.setting-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.setting-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .setting-row label{width:120px;font-size:13px;color:var(--text-2);flex-shrink:0;font-weight:500}
-.setting-row input,.setting-row textarea,.setting-row select{flex:1;border:1px solid var(--border);padding:6px 10px;color:var(--text);font-size:13px;outline:none;font-family:var(--font);border-radius:4px;transition:border-color .1s}
+.setting-row input,.setting-row textarea,.setting-row select{flex:1;border:1px solid var(--border);padding:7px 10px;color:var(--text);font-size:13px;outline:none;font-family:var(--font);border-radius:var(--radius);transition:border-color .15s,box-shadow .15s}
 .setting-row textarea{min-height:56px;resize:vertical}
-.setting-row input:focus,.setting-row textarea:focus,.setting-row select:focus{border-color:var(--text)}
+.setting-row input:focus,.setting-row textarea:focus,.setting-row select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(26,26,46,.08)}
 .setting-row select{cursor:pointer}
 
 .pagination{display:flex;align-items:center;justify-content:center;gap:4px;margin-top:16px}
-.pagination button{padding:5px 10px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:12px;cursor:pointer;border-radius:4px;transition:background .1s}
-.pagination button:hover:not(:disabled){background:var(--hover)}
+.pagination button{padding:5px 10px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:12px;cursor:pointer;border-radius:var(--radius);transition:all .15s}
+.pagination button:hover:not(:disabled){background:var(--hover);border-color:var(--accent)}
 .pagination button:disabled{opacity:.25;cursor:not-allowed}
 .pagination span{font-size:12px;color:var(--text-3);padding:0 8px}
 
-.empty{text-align:center;padding:40px;color:var(--text-3);font-size:14px}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .55s linear infinite}
+.empty{text-align:center;padding:40px;color:var(--text-3);font-size:14px;user-select:none}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 #searchStatus,#applyProgress{font-size:13px;line-height:1.6;color:var(--text-2)}
-.analyze-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:center;justify-content:center}
-.hr-wechat-card{padding:12px 0;border-bottom:1px solid var(--border)}
+.analyze-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.hr-wechat-card{padding:12px 0;border-bottom:1px solid var(--border);transition:background .15s}
+.hr-wechat-card:hover{background:var(--hover)}
 
 /* 空闲超时提示框 */
-.idle-toast{position:fixed;bottom:24px;right:24px;background:var(--text);color:#fff;padding:14px 20px;border-radius:8px;font-size:13px;z-index:1000;box-shadow:0 4px 20px rgba(0,0,0,.25);display:none;max-width:360px;line-height:1.5;cursor:pointer;transition:opacity .3s}
+.idle-toast{position:fixed;bottom:24px;right:24px;background:var(--text);color:#fff;padding:14px 20px;border-radius:var(--radius);font-size:13px;z-index:1000;box-shadow:var(--shadow-lg);display:none;max-width:360px;line-height:1.5;cursor:pointer;transition:opacity .3s,transform .3s}
 .idle-toast.show{display:block;animation:fadeIn .3s ease}
 .idle-toast .idle-countdown{font-weight:600;color:#fbbf24}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -161,6 +173,7 @@ td a:hover{text-decoration:underline}
   background: var(--green) !important;
   color: #fff !important;
   border-color: var(--green) !important;
+  box-shadow: 0 0 8px rgba(22,101,52,.3) !important;
 }
 .auto-reply-off {
   background: var(--surface) !important;
@@ -180,7 +193,8 @@ td a:hover{text-decoration:underline}
 }
 
 /* 分数色块 */
-.score-badge{display:inline-block;min-width:28px;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600;text-align:center;color:#fff;line-height:1.4}
+.score-badge{display:inline-block;min-width:28px;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;color:#fff;line-height:1.4;transition:transform .15s}
+.score-badge:hover{transform:scale(1.1)}
 .score-high{background:var(--green)}
 .score-mid{background:var(--orange)}
 .score-low{background:#9ca3af}
@@ -192,25 +206,26 @@ td a:hover{text-decoration:underline}
 .leg-suspicious{color:var(--red)}
 
 /* 跟进提醒条 */
-.followup-bar{padding:10px 14px;margin-bottom:12px;border-radius:6px;font-size:13px;display:flex;align-items:center;gap:10px}
+.followup-bar{padding:10px 14px;margin-bottom:12px;border-radius:var(--radius);font-size:13px;display:flex;align-items:center;gap:10px;transition:all .2s}
 .followup-bar.overdue{background:#fef2f2;border:1px solid #fecaca;color:var(--red)}
 .followup-bar.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:var(--green)}
 
 /* 趋势图 */
 .trend-chart{display:flex;align-items:flex-end;gap:4px;height:100px;padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:12px}
 .trend-bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
-.trend-bar .bar{width:100%;background:var(--accent);border-radius:2px 2px 0 0;transition:height .3s;min-height:2px}
+.trend-bar .bar{width:100%;background:var(--accent);border-radius:3px 3px 0 0;transition:height .3s;min-height:2px;opacity:.85}
+.trend-bar .bar:hover{opacity:1}
 .trend-bar .lbl{font-size:10px;color:var(--text-3);white-space:nowrap}
 
 /* 漏斗图 */
 .funnel{display:flex;flex-direction:column;gap:6px;padding:12px 0}
 .funnel-step{display:flex;align-items:center;gap:10px;font-size:13px}
-.funnel-bar{height:20px;border-radius:3px;transition:width .3s}
+.funnel-bar{height:20px;border-radius:4px;transition:width .3s}
 .funnel-label{min-width:60px;font-size:12px;color:var(--text-3)}
 .funnel-val{font-size:12px;font-weight:590;min-width:36px}
 .funnel-rate{font-size:11px;color:var(--text-3)}
 
-@media(max-width:768px){.sidebar{width:52px}.sidebar-logo h1,.sidebar-nav a span,.sidebar-status .row span:nth-child(2){display:none}.sidebar-nav a{justify-content:center;padding:8px 0}.main{padding:14px}.chat-container{flex-direction:column;height:auto}.chat-list{width:100%;max-height:160px;border-right:none;border-bottom:1px solid var(--border)}.job-card{flex-direction:column;align-items:flex-start}.job-card .actions{margin-left:0}}
+@media(max-width:768px){.sidebar{width:52px}.sidebar-logo h1,.sidebar-logo div,.sidebar-nav a span:not(.icon),.sidebar-status .row span:nth-child(2){display:none}.sidebar-nav a{justify-content:center;padding:8px 0}.main{padding:14px}.chat-container{flex-direction:column;height:auto}.chat-list{width:100%;max-height:160px;border-right:none;border-bottom:1px solid var(--border)}.job-card{flex-direction:column;align-items:flex-start}.job-card .actions{margin-left:0}.search-bar{flex-direction:column}.search-bar input,.search-bar select{width:100%}.stats-grid{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -229,7 +244,7 @@ td a:hover{text-decoration:underline}
     <nav class="sidebar-nav" id="sideNav">
       <a class="active" data-tab="search"><span class="icon">🔍</span><span>岗位搜索</span></a>
       <a data-tab="applications"><span class="icon">📋</span><span>投递记录</span></a>
-      <a data-tab="chat"><span class="icon">💬</span><span>聊天</span></a>
+      <a data-tab="chat"><span class="icon">💬</span><span>聊天</span><span id="chatBadge" class="nav-badge" style="display:none;"></span></a>
       <a data-tab="wechat"><span class="icon">📱</span><span>微信记录</span></a>
       <a data-tab="settings"><span class="icon">⚙</span><span>设置</span></a>
     </nav>
@@ -238,6 +253,11 @@ td a:hover{text-decoration:underline}
       <div class="row"><span class="dot off" id="monitorDot"></span><span>监控 <span id="monitorStatus">未启动</span></span></div>
       <div class="row" style="margin-top:4px;">
         <button class="btn btn-xs" id="btnAutoApply" onclick="toggleAutoApply()" style="width:100%;justify-content:center;font-size:11px;">自动投递: 关</button>
+      </div>
+      <div class="row" style="margin-top:4px;gap:4px;">
+        <button class="btn btn-xs btn-secondary" onclick="toggleDarkMode()" title="深色模式 (Ctrl+D)" style="flex:1;justify-content:center;font-size:11px;" id="btnDarkMode">深色</button>
+        <button class="btn btn-xs btn-secondary" onclick="exportCSV()" title="导出CSV" style="flex:1;justify-content:center;font-size:11px;">导出</button>
+        <button class="btn btn-xs btn-secondary" onclick="showShortcutHelp()" title="快捷键 (?)" style="flex:1;justify-content:center;font-size:11px;">快捷键</button>
       </div>
     </div>
   </aside>
@@ -254,7 +274,7 @@ td a:hover{text-decoration:underline}
     <!-- Tab 1: Search -->
     <div class="tab active" id="tab-search">
       <div class="search-bar">
-        <input type="text" id="searchKeyword" placeholder="关键词" value="AI Agent">
+        <input type="text" id="searchKeyword" placeholder="关键词（从设置加载）" value="">
         <select id="searchCity">
           <optgroup label="山东省"><option value="济南">济南</option><option value="青岛">青岛</option><option value="淄博" selected>淄博</option><option value="潍坊">潍坊</option><option value="烟台">烟台</option><option value="济宁">济宁</option><option value="临沂">临沂</option><option value="泰安">泰安</option><option value="威海">威海</option><option value="东营">东营</option><option value="滨州">滨州</option><option value="菏泽">菏泽</option><option value="枣庄">枣庄</option><option value="日照">日照</option><option value="聊城">聊城</option><option value="德州">德州</option></optgroup>
           <optgroup label="一线城市"><option value="北京">北京</option><option value="上海">上海</option><option value="广州">广州</option><option value="深圳">深圳</option></optgroup>
@@ -301,6 +321,8 @@ td a:hover{text-decoration:underline}
           <button class="btn btn-sm btn-primary" onclick="batchApplyPending()">一键投递待投递</button>
           <span style="flex:1;"></span>
           <button class="btn btn-sm btn-secondary" onclick="loadTrash()" id="btnTrash">回收站 <span id="trashBadge"></span></button>
+          <button class="btn btn-sm btn-secondary" onclick="exportCSV()">导出CSV</button>
+          <button class="btn btn-sm btn-secondary" onclick="batchScoreJobs()">批量评分</button>
           <button class="btn btn-sm btn-warning" onclick="deduplicateJobs()" id="btnDedup">清理重复</button>
           <button class="btn btn-sm btn-secondary" onclick="refetchDetails()" id="btnRefetch">补全详情</button>
           <button class="btn btn-sm btn-danger" onclick="confirmClearAll()" id="btnClearAll">清空所有</button>
@@ -376,17 +398,30 @@ td a:hover{text-decoration:underline}
       <div class="section"><h3>招呼语设置</h3>
         <div class="setting-row"><label>招呼语模板</label><textarea id="setGreeting">您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？</textarea></div>
         <div class="setting-row"><label>AI回复风格</label><select id="setStyle"><option value="professional">专业</option><option value="casual">轻松</option><option value="enthusiastic">热情</option></select></div>
+        <div style="display:flex;gap:6px;margin-top:4px;padding-left:120px;">
+          <button class="btn btn-sm btn-secondary" onclick="testSmartGreeting()">测试智能招呼</button>
+          <span id="greetingTestResult" style="font-size:11px;color:var(--text-3);line-height:26px;"></span>
+        </div>
       </div>
       <div class="section"><h3>频率限制</h3>
         <div class="setting-row"><label>每日投递上限</label><input type="number" id="setDailyLimit" value="15" min="1" max="30"></div>
         <div class="setting-row"><label>回复间隔(秒)</label><div style="display:flex;gap:6px;flex:1;align-items:center;"><input type="number" id="setMinDelay" value="30" min="10" max="300" style="flex:1;"><span style="color:var(--text-3);">—</span><input type="number" id="setMaxDelay" value="120" min="20" max="600" style="flex:1;"></div></div>
       </div>
+      <div class="section"><h3>岗位匹配条件</h3>
+        <div class="setting-row"><label>工作经验</label><div style="display:flex;gap:6px;flex:1;align-items:center;"><select id="setExpMin" style="flex:1;"><option value="0">应届生</option><option value="1">1年</option><option value="2">2年</option><option value="3">3年</option><option value="5">5年</option></select><span style="color:var(--text-3);">—</span><select id="setExpMax" style="flex:1;"><option value="1">1年</option><option value="3">3年</option><option value="5">5年</option><option value="10">10年</option><option value="99">不限</option></select></div></div>
+        <div class="setting-row"><label>期望薪资</label><div style="display:flex;gap:6px;flex:1;align-items:center;"><input type="number" id="setSalaryMin" placeholder="最低" min="0" max="999" style="flex:1;"><span style="color:var(--text-3);">—</span><input type="number" id="setSalaryMax" placeholder="最高" min="0" max="999" style="flex:1;"><select id="setSalaryUnit" style="width:60px;"><option value="K">K/月</option><option value="元/天">元/天</option></select></div></div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;padding-left:120px;">经验不匹配或薪资超出范围的岗位将自动跳过，不投递</div>
+      </div>
       <div class="section"><h3>个人资料</h3>
         <div class="setting-row"><label>微信号</label><input type="text" id="setWechat" placeholder="AI会引导HR添加"></div>
-        <div class="setting-row"><label>简历摘要</label><textarea id="setResume" placeholder="技能、项目经验...">AI应用开发工程师，熟练Python/LangChain/RAG/Agent开发，有MCP、AutoGen等框架实战经验，做过多个企业级AI应用落地项目。</textarea></div>
+        <div class="setting-row"><label>简历摘要</label><textarea id="setResume" placeholder="技能、项目经验...（上传PDF自动填充，或手动输入）" rows="4"></textarea></div>
+        <div class="setting-row"><label>完整简历</label><textarea id="setResumeFull" placeholder="上传PDF后自动显示完整内容" rows="10" style="min-height:120px;display:none;font-size:12px;line-height:1.5;"></textarea><div id="resumeFullToggle" style="display:flex;gap:6px;align-items:center;"><button class="btn btn-sm btn-secondary" onclick="toggleResumeFull()">查看完整简历</button><span id="resumeFullInfo" style="font-size:11px;color:var(--text-3);"></span></div></div>
+        <div class="setting-row"><label>上传简历</label><div style="display:flex;gap:6px;flex:1;align-items:center;"><input type="file" id="resumeFile" accept=".pdf,.txt,.md" style="flex:1;font-size:12px;"><button class="btn btn-sm btn-primary" onclick="uploadResume()">上传解析</button><span id="resumeUploadStatus" style="font-size:11px;color:var(--text-3);"></span></div></div>
       </div>
       <div class="section"><h3>搜索关键词</h3>
         <div class="setting-row"><label>关键词</label><textarea id="setSearchKeywords" rows="5" placeholder="AI Agent&#10;大模型开发&#10;AI产品经理&#10;RAG开发" style="min-height:64px;"></textarea></div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;padding-left:120px;">每行一个关键词，搜索时会依次搜索所有关键词</div>
+        <div class="setting-row"><label>默认城市</label><select id="setDefaultCity"><option value="全国">全国</option><option value="成都">成都</option><option value="北京">北京</option><option value="上海">上海</option><option value="广州">广州</option><option value="深圳">深圳</option><option value="杭州">杭州</option><option value="武汉">武汉</option><option value="南京">南京</option><option value="重庆">重庆</option><option value="西安">西安</option><option value="长沙">长沙</option><option value="天津">天津</option><option value="苏州">苏州</option><option value="郑州">郑州</option><option value="济南">济南</option><option value="青岛">青岛</option><option value="淄博">淄博</option><option value="潍坊">潍坊</option><option value="烟台">烟台</option></select></div>
       </div>
       <div class="section"><h3>AI模型配置</h3>
         <div class="setting-row"><label>平台</label><select id="setAIPlatform" onchange="onPlatformChange()"><option value="">-- 选择平台 --</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="mimo">小米MiMo</option><option value="custom">自定义</option></select></div>
@@ -394,7 +429,7 @@ td a:hover{text-decoration:underline}
         <div class="setting-row"><label>Base URL</label><input type="text" id="setAIBaseUrl" placeholder="自动填充"></div>
         <div class="setting-row"><label>模型</label><input type="text" id="setAIModel" list="modelList" placeholder="选择或输入模型名" style="flex:1;"><datalist id="modelList"></datalist></div>
         <div class="setting-row"><label>自动回复</label><select id="setAutoReply"><option value="true">开启</option><option value="false">关闭</option></select></div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:4px;">选择平台后自动填充Base URL和可选模型列表</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;padding-left:120px;">选择平台后自动填充Base URL和可选模型列表</div>
       </div>
       <div class="section"><h3>定时任务</h3>
         <div class="setting-row"><label>启用</label><select id="setScheduleEnabled"><option value="false">关闭</option><option value="true">开启</option></select></div>
@@ -424,8 +459,11 @@ td a:hover{text-decoration:underline}
           <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
           <button class="btn btn-sm btn-secondary" id="btnRelogin" onclick="doRelogin()">重新扫码登录</button>
           <button class="btn btn-sm btn-secondary" onclick="manualHeartbeat()">心跳保活</button>
+          <button class="btn btn-sm btn-secondary" onclick="runDoctor()">系统诊断</button>
           <span id="sessionStatus" style="font-size:10px;color:var(--text-3);line-height:26px;"></span>
         </div>
+        <div id="doctorResult" style="font-size:12px;margin-top:8px;display:none;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);"></div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:8px;">保存设置后立即生效，无需重启服务</div>
       </div>
     </div>
   </main>
@@ -433,6 +471,18 @@ td a:hover{text-decoration:underline}
 
 <script>
 let activeTab='search',activeConvId=null,ws=null,conversations=[],currentSearchJobs=[],searchInFlight=false;
+let _resumeFullTextCache=null,_resumeFullOpen=false;
+
+async function safeFetch(url, options = {}) {
+  const r = await fetch(url, options);
+  const text = await r.text();
+  if (!text) return r.ok ? null : Promise.reject(new Error(`HTTP ${r.status}`));
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`HTTP ${r.status}: ${text.slice(0, 100)}`);
+  }
+}
 
 function switchTab(tab){
   activeTab=tab;
@@ -447,7 +497,7 @@ document.querySelectorAll('#sideNav a').forEach(a=>a.addEventListener('click',()
 
 document.addEventListener('click',e=>{
   let b=e.target.closest('[data-action="apply"]');if(b){applyOne(b.dataset.url,b);return;}
-  b=e.target.closest('[data-action="skip"]');if(b){skipJob(b.dataset.id);return;}
+  b=e.target.closest('[data-action="skip"]');if(b){skipJob(b.dataset.id,b);return;}
   b=e.target.closest('[data-action="analyze"]');if(b){let j=window._jobDataMap&&window._jobDataMap[b.dataset.idx];if(j)analyzeJob(j.job_url||'',j.job_title||j.title||'',j.company||'',(j.description||'').slice(0,500));return;}
   b=e.target.closest('[data-action="shortlist"]');if(b){let j=window._jobDataMap&&window._jobDataMap[b.dataset.idx];if(j)toggleShortlist(j.job_url||'',j.job_title||j.title||'',j.company||'',j.salary||'',j.city||'',b);return;}
   b=e.target.closest('[data-action="analyze-app"]');if(b){let j=window._appDataMap&&window._appDataMap[b.dataset.idx];if(j)analyzeJob(j.job_url||'',j.job_title||j.title||'',j.company||'',(j.description||'').slice(0,500));return;}
@@ -472,26 +522,40 @@ window.fetch=function(url,opts){
   });
 };
 
-// 初始化：Token 已通过页面注入，直接加载
-connectWS();loadSettings();refreshStatus();refreshTrashBadge();
+// 全局错误处理
+window.addEventListener('unhandledrejection',function(e){
+  console.warn('[Unhandled]',e.reason);
+});
 
+// 初始化：Token 已通过页面注入，直接加载
+let _wsPingInterval=null;
+let _wsReconnectDelay=1000;
+var _refreshTimer=null;
+var wechatRefreshTimer=null;
+connectWS();loadSettings();refreshStatus();refreshTrashBadge();
 function connectWS(){
+  if(_wsPingInterval){clearInterval(_wsPingInterval);_wsPingInterval=null;}
   ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws'+(API_TOKEN?'?token='+API_TOKEN:''));
+  ws.onopen=()=>{_wsReconnectDelay=1000;_wsPingInterval=setInterval(()=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'ping'}));},30000);};
   ws.onmessage=e=>{try{handleWS(JSON.parse(e.data))}catch(ex){console.error('WS message error:',ex)}};
-  ws.onclose=()=>setTimeout(connectWS,3000);
+  ws.onclose=()=>{if(_wsPingInterval){clearInterval(_wsPingInterval);_wsPingInterval=null;}setTimeout(connectWS,_wsReconnectDelay);_wsReconnectDelay=Math.min(_wsReconnectDelay*2,30000);};
   ws.onerror=()=>ws.close();
 }
+let appCurrentStatus='';
 function handleWS(msg){
   switch(msg.type){
     case'connected':updateStatusUI(msg.status);break;
-    case'search_complete':{let ws_msg='找到 '+msg.found+' 条，新增 '+(msg.new||0)+' 条';if(msg.existing>0) ws_msg+='，已有 '+msg.existing+' 条';if(msg.page_dup>0) ws_msg+='（页面去重 '+msg.page_dup+' 条）';document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">'+ws_msg+'</div>';if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();break;}
+    case'search_complete':{let ws_msg='找到 '+msg.found+' 条，新增 '+(msg.new||0)+' 条';if(msg.existing>0) ws_msg+='，已有 '+msg.existing+' 条';if(msg.page_dup>0) ws_msg+='（页面去重 '+msg.page_dup+' 条）';if(msg.filtered>0) ws_msg+='，<span style="color:var(--orange);">过滤 '+msg.filtered+' 条</span>';document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">'+ws_msg+'</div>';if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();break;}
     case'apply_complete':
-      if(currentSearchJobs.length&&msg.job_url){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===msg.job_url?{...j,status:'applied',id:msg.job_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
+      if(msg.skipped){showToast('跳过: '+msg.reason,'warning');}
+      else if(currentSearchJobs.length&&msg.job_url){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===msg.job_url?{...j,status:'applied',id:msg.job_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
       refreshStatus();if(activeTab==='applications')loadApplications();document.getElementById('searchStatus').innerHTML='';break;
     case'batch_complete':loadJobs();refreshStatus();if(activeTab==='applications')loadApplications();break;
     case'new_messages':case'auto_reply_sent':case'manual_message_sent':
       if(activeTab==='chat'){loadConversations().then(()=>{if(!activeConvId&&conversations.length>0)selectConversation(conversations[0].id);});}
-      if(activeConvId)loadMessages(activeConvId);break;
+      if(activeConvId)loadMessages(activeConvId);
+      if(msg.type==='new_messages'){flashChatBadge();updateChatBadge();}
+      break;
     case'session_expired':document.getElementById('sessionStatus').textContent='登录已过期';break;
     case'relogin_ok':document.getElementById('sessionStatus').textContent='登录态正常';break;
     case'wechat_exchanged':if(activeTab==='wechat')loadWechatExchanges();break;
@@ -506,12 +570,16 @@ function handleWS(msg){
 }
 
 function refreshStatus(){
+  if(_refreshTimer)clearTimeout(_refreshTimer);
+  _refreshTimer=setTimeout(_doRefreshStatus,300);
+}
+function _doRefreshStatus(){
   fetch('/api/status').then(r=>r.json()).then(s=>{
     updateStatusUI(s);
     document.getElementById('statToday').textContent=s.today_applications||0;
     document.getElementById('btnStart').disabled=s.browser_running;
     document.getElementById('btnStop').disabled=!s.browser_running;
-  }).catch(()=>{});
+  }).catch(()=>{document.getElementById('sessionStatus').textContent='连接失败';});
   fetch('/api/stats').then(r=>r.json()).then(d=>{
     renderFunnel(d);
     if(d&&d.replied!==undefined)document.getElementById('statReplied').textContent=d.replied||0;
@@ -536,17 +604,30 @@ function updateStatusUI(s){
   document.getElementById('monitorStatus').textContent=s.monitor_running?(s.monitor_paused?'已暂停':'运行中'):'未启动';
 }
 
-function startSystem(){document.getElementById('btnStart').disabled=true;fetch('/api/system/start',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.status==='started')refreshStatus();else{alert('启动失败: '+(d.message||'未知'));document.getElementById('btnStart').disabled=false;}}).catch(()=>{document.getElementById('btnStart').disabled=false;});}
-function stopSystem(){fetch('/api/system/stop',{method:'POST'}).then(()=>refreshStatus()).catch(()=>alert('停止失败'));}
+function startSystem(){document.getElementById('btnStart').disabled=true;safeFetch('/api/system/start',{method:'POST'}).then(d=>{if(d.status==='started')refreshStatus();else{showToast('启动失败: '+(d.message||'未知'),'error');document.getElementById('btnStart').disabled=false;}}).catch(e=>{showToast('启动失败: '+e.message,'error');document.getElementById('btnStart').disabled=false;});}
+function stopSystem(){fetch('/api/system/stop',{method:'POST'}).then(()=>refreshStatus()).catch(()=>showToast('停止失败','error'));}
 function doRelogin(){if(!confirm('浏览器将打开BOSS登录页，确定继续？'))return;let b=document.getElementById('btnRelogin');b.disabled=true;b.textContent='等待扫码...';document.getElementById('sessionStatus').textContent='请扫码登录';fetch('/api/system/relogin',{method:'POST'}).then(r=>r.json()).then(d=>{b.disabled=false;b.textContent='重新扫码登录';document.getElementById('sessionStatus').textContent=d.status==='ok'?'登录态正常':(d.message||'失败');}).catch(()=>{b.disabled=false;b.textContent='重新扫码登录';});}
 function manualHeartbeat(){document.getElementById('sessionStatus').textContent='检测中...';fetch('/api/system/heartbeat',{method:'POST'}).then(r=>r.json()).then(d=>{document.getElementById('sessionStatus').textContent=d.alive?'登录态正常':'已过期';}).catch(()=>{document.getElementById('sessionStatus').textContent='检测失败';});}
+function runDoctor(){
+  let el=document.getElementById('doctorResult');el.style.display='block';el.innerHTML='<div class="spinner"></div> 诊断中...';el.style.borderColor='var(--border)';
+  fetch('/api/doctor').then(r=>r.json()).then(d=>{
+    let checks=d.checks||{};let html='<div style="margin-bottom:6px;font-weight:590;">'+(d.ok?'<span style="color:var(--green);">系统正常</span>':'<span style="color:var(--orange);">发现问题</span>')+'</div>';
+    for(let[k,v]of Object.entries(checks)){
+      if(typeof v==='object'&&v.ok!==undefined){html+='<div style="display:flex;gap:8px;align-items:center;"><span style="color:'+(v.ok?'var(--green)':'var(--red)')+';">'+(v.ok?'[OK]':'[!!]')+'</span><span>'+esc(k)+': '+esc(v.detail||'')+'</span></div>';}
+      else{html+='<div style="color:var(--text-3);">'+esc(k)+': '+esc(String(v))+'</div>';}
+    }
+    el.innerHTML=html;el.style.borderColor=d.ok?'var(--green)':'var(--orange)';
+  }).catch(e=>{el.innerHTML='<span style="color:var(--red);">诊断失败: '+esc(e.message)+'</span>';el.style.borderColor='var(--red)';});
+}
 
 function doSearch(){
+  if(searchInFlight)return;
   searchInFlight=true;
+  let btn=document.getElementById('btnSearch');if(btn)btn.disabled=true;
   document.getElementById('searchStatus').innerHTML='<div class="spinner"></div> 搜索中...';
   let maxPages=parseInt(document.getElementById('searchMaxPages').value)||5;
   fetch('/api/jobs/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keyword:document.getElementById('searchKeyword').value,city:document.getElementById('searchCity').value,welfare:document.getElementById('searchWelfare').value||undefined,max_pages:maxPages})}).then(r=>r.json()).then(d=>{
-    searchInFlight=false;
+    searchInFlight=false;if(btn)btn.disabled=false;
     if(d.detail){
       let msg=esc(d.detail);
       if(d.detail.includes('未登录')||d.detail.includes('登录')){
@@ -560,11 +641,12 @@ function doSearch(){
     let msg2='找到 '+d.jobs_found+' 条独立岗位，新增 '+d.new_jobs+' 条';
     if(d.db_existing>0) msg2+='，已有 '+d.db_existing+' 条';
     if(d.page_duplicates>0) msg2+='（页面去重 '+d.page_duplicates+' 条）';
+    if(d.filtered>0) msg2+='，<span style="color:var(--orange);">过滤 '+d.filtered+' 条（经验/薪资不匹配）</span>';
     document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">'+msg2+'</div>';
     currentSearchJobs.length?renderJobs(currentSearchJobs):loadJobs();
-  }).catch(err=>{searchInFlight=false;document.getElementById('searchStatus').innerHTML='<div style="color:var(--red);margin-top:8px;">失败: '+esc(err.message)+'</div>';});
+  }).catch(err=>{searchInFlight=false;if(btn)btn.disabled=false;document.getElementById('searchStatus').innerHTML='<div style="color:var(--red);margin-top:8px;">失败: '+esc(err.message)+'</div>';});
 }
-function loadJobs(){fetch('/api/jobs?limit=50&sort_by=composite_score').then(r=>r.json()).then(d=>{currentSearchJobs=[];renderJobs(d.jobs||[]);}).catch(()=>{});}
+function loadJobs(){fetch('/api/jobs?limit=50&sort_by=composite_score').then(r=>r.json()).then(d=>{currentSearchJobs=[];renderJobs(d.jobs||[]);}).catch(()=>{document.getElementById('jobsGrid').innerHTML='<div class="empty" style="color:var(--red);">加载失败</div>';});}
 
 function renderJobs(jobs){
   const grid=document.getElementById('jobsGrid');
@@ -597,20 +679,21 @@ function renderJobs(jobs){
 }
 
 function applyOne(url,btn){
-  if(!url){alert('缺少链接');return;}
+  if(!url){showToast('缺少链接','warning');return;}
   if(btn){btn.disabled=true;btn.textContent='投递中...';}
   fetch('/api/jobs/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url})}).then(r=>r.json()).then(d=>{
+    if(d.skipped){showToast(d.message||'已跳过','warning');if(btn){btn.disabled=false;btn.textContent='投递';}return;}
     if(d.success){
       if(currentSearchJobs.length){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===url?{...j,status:'applied',id:d.application_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
       refreshStatus();if(activeTab==='applications')loadApplications();
-    }else{alert(d.message||'失败');if(btn){btn.disabled=false;btn.textContent='投递';}}
+    }else{showToast(d.message||'投递失败','error');if(btn){btn.disabled=false;btn.textContent='投递';}}
   }).catch(()=>{if(btn){btn.disabled=false;btn.textContent='投递';}});
 }
-function skipJob(id){fetch('/api/jobs/'+id+'/skip',{method:'POST'}).then(()=>{if(currentSearchJobs.length){currentSearchJobs=currentSearchJobs.map(j=>String(j.id)===String(id)?{...j,status:'skipped'}:j);renderJobs(currentSearchJobs);}else loadJobs();if(activeTab==='applications')loadApplications();});}
+function skipJob(id,btn){if(btn)btn.disabled=true;fetch('/api/jobs/'+id+'/skip',{method:'POST'}).then(()=>{if(currentSearchJobs.length){currentSearchJobs=currentSearchJobs.map(j=>String(j.id)===String(id)?{...j,status:'skipped'}:j);renderJobs(currentSearchJobs);}else loadJobs();if(activeTab==='applications')loadApplications();}).catch(()=>{if(btn)btn.disabled=false;});}
 
 function analyzeJob(url,title,company,desc){
   let m=document.createElement('div');m.className='analyze-modal-overlay';
-  m.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);padding:20px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;font-size:13px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">AI 岗位分析</h3><button onclick="this.closest(\'.analyze-modal-overlay\').remove()" style="background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;">&times;</button></div><div id="analyzeResult"><div class="spinner"></div> 分析中...</div><div style="font-size:10px;color:var(--text-3);margin-top:8px;">'+esc(title)+' @ '+esc(company)+'</div></div>';
+  m.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);padding:20px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;font-size:13px;border-radius:var(--radius);box-shadow:var(--shadow-lg);"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">AI 岗位分析</h3><button onclick="this.closest(\'.analyze-modal-overlay\').remove()" style="background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;">&times;</button></div><div id="analyzeResult"><div class="spinner"></div> 分析中...</div><div style="font-size:10px;color:var(--text-3);margin-top:8px;">'+esc(title)+' @ '+esc(company)+'</div></div>';
   document.body.appendChild(m);
   let ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),60000);
   fetch('/api/jobs/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,job_title:title,company:company,description:desc||''}),signal:ctrl.signal}).then(r=>{clearTimeout(timer);if(!r.ok)throw new Error('HTTP '+r.status+' '+r.statusText);return r.json();}).then(d=>{
@@ -628,13 +711,14 @@ function analyzeJob(url,title,company,desc){
 }
 
 function toggleShortlist(url,title,company,salary,city,btn){
+  if(btn)btn.disabled=true;
   fetch('/api/shortlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,title,company,salary,city})}).then(r=>r.json()).then(d=>{
     if(d.status==='already_exists'||d.status==='duplicate'){btn.textContent='已收藏';btn.style.opacity='.5';}else{btn.textContent='已收藏';btn.style.opacity='1';}
-  });
+  }).catch(()=>{if(btn)btn.disabled=false;});
 }
 
-let appCurrentPage=1,appCurrentStatus='',appAllJobs=[],APP_PAGE_SIZE=15;
-function loadApplications(status){appCurrentStatus=status||'';appCurrentPage=1;clearSelection();fetch('/api/jobs?limit=500&sort_by=composite_score'+(status?'&status='+status:'')).then(r=>r.json()).then(d=>{appAllJobs=d.jobs||[];renderAppPage();});}
+let appCurrentPage=1,appAllJobs=[],APP_PAGE_SIZE=15;
+function loadApplications(status){appCurrentStatus=status||'';appCurrentPage=1;clearSelection();let tbody=document.getElementById('appTableBody');tbody.innerHTML='<tr><td colspan="8" class="empty">加载中...</td></tr>';fetch('/api/jobs?limit=500&sort_by=composite_score'+(status?'&status='+status:'')).then(r=>r.json()).then(d=>{appAllJobs=d.jobs||[];renderAppPage();}).catch(()=>{tbody.innerHTML='<tr><td colspan="8" class="empty" style="color:var(--red);">加载失败</td></tr>';});}
 function renderAppPage(){
   let tbody=document.getElementById('appTableBody'),total=appAllJobs.length,totalPages=Math.max(1,Math.ceil(total/APP_PAGE_SIZE)),start=(appCurrentPage-1)*APP_PAGE_SIZE;
   if(appCurrentPage>totalPages)appCurrentPage=totalPages;
@@ -642,7 +726,7 @@ function renderAppPage(){
   if(!total){tbody.innerHTML='<tr><td colspan="8" class="empty">暂无记录</td></tr>';document.getElementById('appPagination').innerHTML='';return;}
   let sl={pending:'待投递',applied:'已投递',replied:'已回复',skipped:'已跳过',failed:'失败'},sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed'};
   window._appDataMap={};
-  tbody.innerHTML=page.map((j,i)=>{window._appDataMap[i]=j;let s=j.status||'pending';let checked=window._selectedIds&&window._selectedIds.has(j.id)?'checked':'';let displayScore=j.composite_score!=null?j.composite_score:j.score;let scoreHtml=displayScore!=null?'<span class="score-badge '+(displayScore>=80?'score-high':displayScore>=60?'score-mid':'score-low')+'" title="综合:'+(j.composite_score||'-')+' CV:'+(j.score||'-')+'">'+displayScore+'</span>':'<span class="score-badge score-none">-</span>';let legIcon=j.legitimacy==='caution'?' <span class="leg-icon leg-caution" title="注意">&#9888;</span>':j.legitimacy==='suspicious'?' <span class="leg-icon leg-suspicious" title="可疑">&#9888;&#9888;</span>':'';return'<tr><td><input type="checkbox" class="job-cb" data-id="'+j.id+'" '+checked+' onchange="onJobCheck(this)"></td><td><a href="'+attr(j.job_url)+'" target="_blank" rel="noopener noreferrer">'+esc(j.job_title||j.title||'未知')+'</a>'+legIcon+'</td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+scoreHtml+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" data-action="apply" data-url="'+attr(j.job_url)+'">投递</button> ':'')+'<button class="btn btn-sm btn-secondary" data-action="analyze-app" data-idx="'+i+'">分析</button> <button class="btn btn-xs btn-danger" onclick="deleteSingle('+j.id+')">删除</button></td></tr>';}).join('');
+  tbody.innerHTML=page.map((j,i)=>{window._appDataMap[i]=j;let s=j.status||'pending';let checked=window._selectedIds&&window._selectedIds.has(j.id)?'checked':'';let displayScore=j.composite_score!=null?j.composite_score:j.score;let scoreHtml=displayScore!=null?'<span class="score-badge '+(displayScore>=80?'score-high':displayScore>=60?'score-mid':'score-low')+'" title="综合:'+(j.composite_score||'-')+' CV:'+(j.score||'-')+'">'+displayScore+'</span>':'<span class="score-badge score-none">-</span>';let legIcon=j.legitimacy==='caution'?' <span class="leg-icon leg-caution" title="注意">&#9888;</span>':j.legitimacy==='suspicious'?' <span class="leg-icon leg-suspicious" title="可疑">&#9888;&#9888;</span>':'';return'<tr><td><input type="checkbox" class="job-cb" data-id="'+j.id+'" '+checked+' onchange="onJobCheck(this)"></td><td><a href="'+attr(j.job_url)+'" target="_blank" rel="noopener noreferrer">'+esc(j.job_title||j.title||'未知')+'</a>'+legIcon+'</td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+scoreHtml+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" data-action="apply" data-url="'+attr(j.job_url)+'">投递</button> ':'')+'<button class="btn btn-sm btn-secondary" data-action="analyze-app" data-idx="'+i+'">分析</button> <button class="btn btn-xs btn-danger" onclick="deleteSingle('+j.id+',this)">删除</button></td></tr>';}).join('');
   document.getElementById('appPagination').innerHTML='<button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage=1;renderAppPage()">«</button><button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage--;renderAppPage()">‹</button><span>'+(start+1)+'-'+Math.min(start+APP_PAGE_SIZE,total)+' / '+total+'</span><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage++;renderAppPage()">›</button><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage=totalPages;renderAppPage()">»</button>';
 }
 
@@ -652,9 +736,9 @@ function loadShortlists(){
     if(!sl.length){tbody.innerHTML='<tr><td colspan="8" class="empty">暂无收藏</td></tr>';return;}
     window._slDataMap={};
     tbody.innerHTML=sl.map((s,i)=>{window._slDataMap[i]=s;return'<tr><td></td><td><a href="'+attr(s.job_url)+'" target="_blank" rel="noopener noreferrer">'+esc(s.job_title)+'</a></td><td>'+esc(s.company||'')+'</td><td>'+esc(s.salary||'')+'</td><td></td><td>'+esc(s.city||'')+'</td><td><span class="badge badge-applied">收藏</span></td><td><button class="btn btn-sm btn-secondary" onclick="removeShortlist('+s.id+',this)">取消</button> <button class="btn btn-sm btn-primary" data-action="apply" data-url="'+attr(s.job_url)+'">投递</button> <button class="btn btn-sm btn-secondary" data-action="analyze-sl" data-idx="'+i+'">分析</button></td></tr>';}).join('');
-  });
+  }).catch(()=>{let tbody=document.getElementById('appTableBody');if(tbody)tbody.innerHTML='<tr><td colspan="8" class="empty" style="color:var(--red);">加载失败</td></tr>';});
 }
-function removeShortlist(id,btn){fetch('/api/shortlists/'+id,{method:'DELETE'}).then(()=>loadShortlists());}
+function removeShortlist(id,btn){if(btn)btn.disabled=true;fetch('/api/shortlists/'+id,{method:'DELETE'}).then(()=>{loadShortlists();showToast('已移除','success');}).catch(()=>{if(btn)btn.disabled=false;showToast('移除失败','error');});}
 
 // ── 删除 & 回收站 ──
 window._selectedIds=new Set();
@@ -662,12 +746,13 @@ function onJobCheck(cb){let id=parseInt(cb.dataset.id);if(cb.checked)window._sel
 function toggleSelectAll(el){let cbs=document.querySelectorAll('.job-cb');cbs.forEach(cb=>{cb.checked=el.checked;let id=parseInt(cb.dataset.id);if(el.checked)window._selectedIds.add(id);else window._selectedIds.delete(id);});updateBatchBar();}
 function clearSelection(){window._selectedIds.clear();document.getElementById('selectAll').checked=false;document.querySelectorAll('.job-cb').forEach(cb=>cb.checked=false);updateBatchBar();}
 function updateBatchBar(){let n=window._selectedIds.size;document.getElementById('batchCount').textContent=n;document.getElementById('batchBar').style.display=n>0?'block':'none';}
-function deleteSingle(id){if(!confirm('确定删除该岗位？可在回收站恢复。'))return;fetch('/api/jobs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:[id]})}).then(r=>r.json()).then(d=>{if(d.deleted>0){loadApplications(appCurrentStatus);refreshTrashBadge();}});}
+function deleteSingle(id,btn){if(!confirm('确定删除该岗位？可在回收站恢复。'))return;if(btn)btn.disabled=true;fetch('/api/jobs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:[id]})}).then(r=>r.json()).then(d=>{if(d.deleted>0){loadApplications(appCurrentStatus);refreshTrashBadge();}}).catch(()=>{if(btn)btn.disabled=false;});}
 function batchDelete(){let ids=Array.from(window._selectedIds);if(!ids.length)return;if(!confirm('确定删除选中的 '+ids.length+' 条岗位？可在回收站恢复。'))return;fetch('/api/jobs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids})}).then(r=>r.json()).then(d=>{if(d.deleted>0){clearSelection();loadApplications(appCurrentStatus);refreshTrashBadge();}});}
-function confirmClearAll(){let input=prompt('此操作将清空所有岗位数据！\n请输入"确认清空"以继续：');if(input!=='确认清空'){if(input!==null)alert('输入不匹配，操作已取消');return;}fetch('/api/jobs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'确认清空'})}).then(r=>r.json()).then(d=>{alert('已清空 '+d.deleted+' 条岗位');loadApplications('');refreshTrashBadge();});}
-function deduplicateJobs(){if(!confirm('将按「公司+岗位+城市+薪资」清理重复数据，每组仅保留最早记录。\n是否继续？'))return;fetch('/api/jobs/deduplicate',{method:'POST'}).then(r=>r.json()).then(d=>{let msg='清理完成！\n总记录: '+d.total+'\n发现重复: '+d.duplicates_found+'\n已清理: '+d.duplicates_removed;if(d.duplicates_removed>0){loadApplications(appCurrentStatus);refreshTrashBadge();}alert(msg);}).catch(e=>{alert('清理失败: '+e.message);});}
-function refetchDetails(){let btn=document.getElementById('btnRefetch');if(btn){btn.disabled=true;btn.textContent='抓取中...';}fetch('/api/jobs/refetch',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message||'完成');loadApplications(appCurrentStatus);}).catch(e=>{alert('失败: '+e.message);}).finally(()=>{if(btn){btn.disabled=false;btn.textContent='补全详情';}});}
-function refreshTrashBadge(){fetch('/api/trash/count').then(r=>r.json()).then(d=>{let b=document.getElementById('trashBadge');if(b)b.textContent=d.count>0?('('+d.count+')'):'';});}
+function confirmClearAll(){let input=prompt('此操作将清空所有岗位数据！\n请输入"确认清空"以继续：');if(input!=='确认清空'){if(input!==null)showToast('输入不匹配，操作已取消','warning');return;}showToast('正在清空...','info');fetch('/api/jobs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'确认清空'})}).then(r=>r.json()).then(d=>{showToast('已清空 '+d.deleted+' 条岗位','success');loadApplications('');refreshTrashBadge();}).catch(()=>showToast('清空失败','error'));}
+function deduplicateJobs(){if(!confirm('将按「公司+岗位+城市+薪资」清理重复数据，每组仅保留最早记录。\n是否继续？'))return;safeFetch('/api/jobs/deduplicate',{method:'POST'}).then(d=>{let msg='清理完成！记录:'+d.total+' 重复:'+d.duplicates_found+' 已清理:'+d.duplicates_removed;if(d.duplicates_removed>0){loadApplications(appCurrentStatus);refreshTrashBadge();}showToast(msg,'success');}).catch(e=>{showToast('清理失败: '+e.message,'error');});}
+function refetchDetails(){let btn=document.getElementById('btnRefetch');if(btn){btn.disabled=true;btn.textContent='抓取中...';}safeFetch('/api/jobs/refetch',{method:'POST'}).then(d=>{showToast(d.message||'完成','success');loadApplications(appCurrentStatus);}).catch(e=>{showToast('失败: '+e.message,'error');}).finally(()=>{if(btn){btn.disabled=false;btn.textContent='补全详情';}});}
+function batchScoreJobs(){if(!confirm('确定要批量评分所有未评分岗位？'))return;safeFetch('/api/jobs/batch-score',{method:'POST'}).then(d=>{showToast(d.message||'开始评分','success');}).catch(e=>{showToast('批量评分失败: '+e.message,'error');});}
+function refreshTrashBadge(){fetch('/api/trash/count').then(r=>r.json()).then(d=>{let b=document.getElementById('trashBadge');if(b)b.textContent=d.count>0?('('+d.count+')'):'';}).catch(()=>{});}
 function loadTrash(){fetch('/api/trash').then(r=>r.json()).then(d=>{
   let tbody=document.getElementById('appTableBody'),items=d.trash||[];
   document.getElementById('appPagination').innerHTML='';
@@ -680,7 +765,7 @@ function loadTrash(){fetch('/api/trash').then(r=>r.json()).then(d=>{
   if(oldHeader)oldHeader.remove();
   tbody.insertAdjacentHTML('beforebegin','<tr class="trash-header"><td colspan="8" style="padding:8px 0;font-size:12px;color:var(--text-3);">回收站共 '+total+' 条（保留7天） <button class="btn btn-xs btn-secondary" onclick="loadApplications(\'\')">返回列表</button></td></tr>');
 });}
-function restoreSingle(id){fetch('/api/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:[id]})}).then(r=>r.json()).then(d=>{if(d.restored>0){loadTrash();refreshTrashBadge();}});}
+function restoreSingle(id){fetch('/api/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:[id]})}).then(r=>r.json()).then(d=>{if(d.restored>0){loadTrash();refreshTrashBadge();showToast('已恢复','success');}else{showToast('恢复失败','error');}}).catch(()=>showToast('恢复请求失败','error'));}
 
 // 会话搜索筛选
 let currentConvStatus = 'all';
@@ -735,8 +820,14 @@ function renderConversationList(convs) {
     const preview = (c.last_message_text || '').slice(0, 40);
     const meta = [c.hr_company, (c.job_title || '').slice(0, 15)].filter(Boolean).join(' · ');
 
+    // 兴趣度标记
+    let interestHtml = '';
+    if (c.interest_level === 'high') interestHtml = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-left:4px;" title="高兴趣"></span>';
+    else if (c.interest_level === 'medium') interestHtml = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--orange);margin-left:4px;" title="中兴趣"></span>';
+    else if (c.interest_level === 'low') interestHtml = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--text-3);margin-left:4px;" title="低兴趣"></span>';
+
     return '<div class="chat-list-item' + (isActive ? ' active' : '') + '" data-conv-id="' + c.id + '">'
-      + '<div class="name">' + esc(c.hr_name || '未知') + ' ' + unreadBadge + '</div>'
+      + '<div class="name">' + esc(c.hr_name || '未知') + interestHtml + ' ' + unreadBadge + '</div>'
       + '<div class="preview">' + esc(preview) + '</div>'
       + '<div style="font-size:10px;color:var(--text-3);margin-top:2px;">' + esc(meta) + '</div>'
       + '</div>';
@@ -747,12 +838,22 @@ function loadConversations(){
   return fetch('/api/conversations').then(r=>r.json()).then(d=>{
     conversations=d.conversations||[];
     filterConversations();
-  });
+  }).catch(()=>{let el=document.getElementById('conversationList');if(el)el.innerHTML='<div class="empty" style="color:var(--red);">加载失败</div>';});
 }
 function selectConversation(id){
-  activeConvId=id;loadConversations();loadMessages(id);
+  activeConvId=id;loadMessages(id);
   let conv=conversations.find(c=>c.id===id);if(!conv)return;
-  document.getElementById('chatHeader').innerHTML='<div class="info"><span class="name">'+esc(conv.hr_name||'未知')+'</span><br><span class="company">'+esc(conv.hr_company||'')+' · '+esc((conv.job_title||'').slice(0,20))+'</span></div>';
+  // 兴趣度和情感标签
+  let interestLabel='',interestColor='';
+  if(conv.interest_level==='high'){interestLabel='高兴趣';interestColor='var(--green)';}
+  else if(conv.interest_level==='medium'){interestLabel='中兴趣';interestColor='var(--orange)';}
+  else if(conv.interest_level==='low'){interestLabel='低兴趣';interestColor='var(--text-3)';}
+  let emotionMap={confident_happy:'自信开心',nervous_confident:'紧张自信',eager_cautious:'积极谨慎',shy_excited:'害羞兴奋',curious_enthusiastic:'好奇热情',calm_professional:'冷静专业'};
+  let emotionLabel=emotionMap[conv.emotion]||conv.emotion||'';
+  let tagsHtml='';
+  if(interestLabel)tagsHtml+='<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:'+interestColor+';color:#fff;margin-right:4px;">'+interestLabel+'</span>';
+  if(emotionLabel)tagsHtml+='<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:var(--sidebar-bg);border:1px solid var(--border);color:var(--text-2);">'+emotionLabel+'</span>';
+  document.getElementById('chatHeader').innerHTML='<div class="info"><span class="name">'+esc(conv.hr_name||'未知')+'</span> '+tagsHtml+'<br><span class="company">'+esc(conv.hr_company||'')+' · '+esc((conv.job_title||'').slice(0,20))+'</span></div>';
   let btnAuto=document.getElementById('btnAutoReplyToggle');
   let btnSend=document.getElementById('btnManualSend');
   const autoReplyBtnClass = conv.auto_reply_enabled ? 'btn btn-sm auto-reply-on' : 'btn btn-sm auto-reply-off';
@@ -761,7 +862,7 @@ function selectConversation(id){
   if(btnSend){btnSend.disabled=false;}
   syncConversation(id);
 }
-function loadMessages(id){fetch('/api/conversations/'+id+'/messages?limit=100').then(r=>r.json()).then(d=>renderMessages(d.messages||[]));}
+function loadMessages(id){let pane=document.getElementById('chatMessages');pane.innerHTML='<div class="empty">加载中...</div>';fetch('/api/conversations/'+id+'/messages?limit=100').then(r=>r.json()).then(d=>{if(activeConvId===id)renderMessages(d.messages||[]);}).catch(()=>{if(activeConvId===id)pane.innerHTML='<div class="empty" style="color:var(--red);">加载失败</div>';});}
 function syncConversation(id){fetch('/api/conversations/'+id+'/sync',{method:'POST'}).then(r=>r.json()).then(d=>{if(activeConvId===id&&d.messages)renderMessages(d.messages);}).catch(()=>{if(activeConvId===id)loadMessages(id);});}
 // 按日期分组消息
 function groupMessagesByDate(messages) {
@@ -790,7 +891,7 @@ function formatMessageContent(content) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/(https?:\/\/[^\s"]+)/g, function(url) {
-      return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;">' + url + '</a>';
+      return '<a href="' + attr(url) + '" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;">' + esc(url) + '</a>';
     })
     .replace(/\n/g, '<br>');
 }
@@ -844,24 +945,35 @@ function renderMessages(msgs){
 function sendManualMessage(){
   if(!activeConvId)return;let input=document.getElementById('chatInput'),c=input.value.trim();if(!c)return;
   input.value='';input.disabled=true;let btn=document.getElementById('btnManualSend');if(btn){btn.disabled=true;btn.textContent='发送中...';}
-  fetch('/api/conversations/'+activeConvId+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})}).then(r=>r.json()).then(()=>{loadMessages(activeConvId);loadConversations();}).catch(e=>{alert('失败: '+(e.message||'网络错误'));}).finally(()=>{input.disabled=false;input.style.height='auto';input.focus();if(btn){btn.disabled=false;btn.textContent='发送';}});
+  fetch('/api/conversations/'+activeConvId+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})}).then(r=>r.json()).then(()=>{loadMessages(activeConvId);loadConversations();}).catch(e=>{showToast('发送失败: '+(e.message||'网络错误'),'error');}).finally(()=>{input.disabled=false;input.style.height='auto';input.focus();if(btn){btn.disabled=false;btn.textContent='发送';}});
 }
-function showToast(message) {
+function showToast(message, type='info') {
   const existing = document.querySelector('.toast-message');
   if (existing) existing.remove();
 
   const toast = document.createElement('div');
   toast.className = 'toast-message';
   toast.textContent = message;
-  toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;animation:fadeInUp .3s;';
+  let bg = 'var(--text)';
+  let icon = '';
+  if (type === 'warning') { bg = 'var(--orange)'; icon = '[!] '; }
+  else if (type === 'error') { bg = 'var(--red)'; icon = '[X] '; }
+  else if (type === 'success') { bg = 'var(--green)'; icon = '[OK] '; }
+  toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:'+bg+';color:#fff;padding:10px 20px;border-radius:var(--radius);font-size:13px;z-index:9999;animation:fadeInUp .3s;box-shadow:var(--shadow-lg);';
+  toast.textContent = icon + message;
+  toast.style.cursor = 'pointer';
+  toast.title = '点击关闭';
+  toast.onclick = () => toast.remove();
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2000);
+  let duration = type === 'error' ? 6000 : type === 'warning' ? 5000 : 3000;
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, duration);
 }
 
 function toggleAutoReply(){
   if(!activeConvId)return;let conv=conversations.find(c=>c.id===activeConvId);if(!conv)return;
   let newState=!conv.auto_reply_enabled;
-  fetch('/api/conversations/'+activeConvId+'/auto-reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:newState})}).then(r=>r.json()).then(()=>{return loadConversations().then(()=>selectConversation(activeConvId));}).then(()=>{showToast(newState ? '自动回复已开启' : '自动回复已暂停');}).catch(e=>{showToast('操作失败，请重试');});
+  let endpoint=newState?'/resume':'/pause';
+  fetch('/api/conversations/'+activeConvId+endpoint,{method:'POST'}).then(r=>r.json()).then(()=>{return loadConversations().then(()=>selectConversation(activeConvId));}).then(()=>{showToast(newState ? '自动回复已开启' : '自动回复已暂停','success');}).catch(e=>{showToast('操作失败，请重试','error');});
 }
 function navigateBrowserToChat(){fetch('/api/system/navigate-chat',{method:'POST'}).catch(()=>{});}
 
@@ -874,16 +986,15 @@ function loadWechatExchanges(){
       let desc=e.job_description?'<div style="font-size:12px;color:var(--text-2);margin-bottom:8px;line-height:1.5;background:var(--sidebar-bg);padding:10px;border:1px solid var(--border);">'+esc(e.job_description)+'</div>':'';
       return'<div class="hr-wechat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div><div style="font-weight:590;font-size:13px;">'+esc(e.hr_name)+'</div>'+desc+'<div style="display:flex;align-items:center;gap:8px;"><code style="background:var(--sidebar-bg);padding:4px 10px;border:1px solid var(--border);font-size:14px;color:var(--text);display:inline-block;">'+esc(w)+'</code><button class="btn btn-xs btn-primary copy-wechat-btn" data-wechat="'+esc(w)+'">复制</button></div></div><div style="font-size:10px;color:var(--text-3);text-align:right;">'+esc(e.hr_company||'')+'<br>'+t+'</div></div></div>';
     }).join('');
-  });
+  }).catch(()=>{});
 }
 // 微信记录每30秒自动刷新
-let wechatRefreshTimer=null;
 function startWechatAutoRefresh(){
   stopWechatAutoRefresh();
   wechatRefreshTimer=setInterval(()=>{if(activeTab==='wechat')loadWechatExchanges();},30000);
 }
 function stopWechatAutoRefresh(){if(wechatRefreshTimer){clearInterval(wechatRefreshTimer);wechatRefreshTimer=null;}}
-function copyWechat(text,btn){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1500);});}
+function copyWechat(text,btn){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1500);}).catch(()=>showToast('复制失败，请手动复制','error'));}
 // 事件委托：复制微信
 document.addEventListener('click',e=>{
   let btn=e.target.closest('.copy-wechat-btn');
@@ -892,7 +1003,7 @@ document.addEventListener('click',e=>{
 
 function batchApplyAll(){
   let pending=currentSearchJobs.filter(j=>j.job_url&&j.status!=='applied'&&j.status!=='replied');
-  if(!pending.length){alert('没有待投递的岗位，请先搜索');return;}
+  if(!pending.length){showToast('没有待投递的岗位，请先搜索','warning');return;}
   if(!confirm('确定投递 '+pending.length+' 条？'))return;
   doBatchApply(pending.map(j=>j.job_url),'searchStatus');
 }
@@ -906,21 +1017,30 @@ async function batchApplyPending(){
 }
 function doBatchApply(urls,elId){
   let done=0,ok=0,total=urls.length,cancelled=false,el=document.getElementById(elId);
-  function up(){if(cancelled)return;let p=Math.round(done/total*100);el.innerHTML='<div style="margin-bottom:8px;">'+done+'/'+total+' ('+ok+' 成功)</div><div style="background:rgba(0,0,0,.05);border-radius:4px;height:16px;overflow:hidden;"><div style="background:var(--accent);height:100%;width:'+p+'%;transition:width .3s;"></div></div><div style="font-size:11px;color:var(--text-3);margin-top:4px;">'+p+'%<button class="btn btn-xs btn-danger" style="margin-left:12px;" onclick="cancelBatch()">取消</button></div>';}
+  function up(){if(cancelled)return;let p=Math.round(done/total*100);el.innerHTML='<div style="margin-bottom:8px;">'+done+'/'+total+' ('+ok+' 成功)</div><div style="background:rgba(0,0,0,.05);border-radius:var(--radius);height:16px;overflow:hidden;"><div style="background:var(--accent);height:100%;width:'+p+'%;transition:width .3s;"></div></div><div style="font-size:11px;color:var(--text-3);margin-top:4px;">'+p+'%<button class="btn btn-xs btn-danger" style="margin-left:12px;" onclick="cancelBatch()">取消</button></div>';}
   window.cancelBatch=function(){cancelled=true;el.innerHTML='已取消: '+done+'/'+total+' ('+ok+' 成功)';loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();};
   async function next(i){if(cancelled||i>=total){if(!cancelled)el.innerHTML='完成: '+ok+'/'+total+' 成功';loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();return;}up();try{let r=await fetch('/api/jobs/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:urls[i]})}),d=await r.json();if(d.success)ok++;}catch(ex){}done++;next(i+1);}
   next(0);
 }
 function batchSearch(){
-  let kw=document.getElementById('searchKeyword').value,cs=[];
+  let cs=[];
   let txt=document.getElementById('setSearchKeywords');if(txt&&txt.value){cs=txt.value.split('\n').filter(s=>s.trim());}
   if(cs.length===0){doSearch();return;}
   if(!confirm('确定搜索 '+cs.length+' 个关键词？'))return;
-  (async()=>{for(let k of cs){document.getElementById('searchKeyword').value=k;await new Promise(r=>{doSearch();let t=setInterval(()=>{if(!searchInFlight){clearInterval(t);setTimeout(r,200);}},300);});}})();
+  let total=cs.length,done=0,totalNew=0;
+  showToast('开始批量搜索 '+total+' 个关键词...','info');
+  (async()=>{for(let k of cs){
+    document.getElementById('searchKeyword').value=k;
+    document.getElementById('searchStatus').innerHTML='<div class="spinner"></div> 批量搜索 ('+(done+1)+'/'+total+'): '+esc(k);
+    await new Promise(r=>{doSearch();let t=setInterval(()=>{if(!searchInFlight){clearInterval(t);setTimeout(r,300);}},300);});
+    done++;
+  }
+  showToast('批量搜索完成: '+done+' 个关键词已搜索','success');
+  })();
 }
 
 function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'):'';}
-function attr(s){return s?s.replace(/'/g,"&#39;"):'';}
+function attr(s){return s?s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"&#39;"):'';}
 function setVal(id,v){let el=document.getElementById(id);if(el)el.value=v;}
 
 function loadSettings(){
@@ -929,6 +1049,11 @@ function loadSettings(){
     setVal('setGreeting',s.greeting_template||'');
     setVal('setStyle',s.ai_reply_style||'professional');
     setVal('setDailyLimit',s.daily_apply_limit||'15');
+    setVal('setExpMin',s.experience_min||'0');
+    setVal('setExpMax',s.experience_max||'3');
+    setVal('setSalaryMin',s.salary_min||'');
+    setVal('setSalaryMax',s.salary_max||'');
+    setVal('setSalaryUnit',s.salary_unit||'K');
     setVal('setMinDelay',s.min_reply_delay_sec||'30');
     setVal('setMaxDelay',s.max_reply_delay_sec||'120');
     setVal('setResume',s.resume_summary||'');
@@ -937,22 +1062,88 @@ function loadSettings(){
     setVal('setAutoReply',s.auto_reply_enabled||'true');
     setVal('setAIBaseUrl',s.ai_base_url||'');
     setVal('setAIModel',s.ai_model||'');
+    // 从 base_url 反推平台选择
+    let baseUrl=s.ai_base_url||'';let detected='';
+    if(baseUrl.includes('deepseek'))detected='deepseek';else if(baseUrl.includes('openrouter'))detected='openrouter';else if(baseUrl.includes('xiaomimimo')||baseUrl.includes('mimo'))detected='mimo';else if(baseUrl)detected='custom';
+    if(detected)setVal('setAIPlatform',detected);
     setVal('setAutoApply',s.auto_apply_enabled||'false');
-    setVal('setAutoApplyThreshold',s.auto_apply_threshold||'73');
+    setVal('setAutoApplyThreshold',s.auto_apply_threshold||'80');
     setVal('setAutoApplyHrActive',s.auto_apply_hr_active_required||'true');
     setVal('setFilterInactiveHr',s.filter_inactive_hr||'true');
+    setVal('setDefaultCity',s.default_city||'全国');
     updateAutoApplyBtn(s.auto_apply_enabled==='true');
     if(s.ai_key_configured==='true'){document.getElementById('setAIApiKey').placeholder='已配置';document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--green);">已配置</span>';}
     else{document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--orange);">未配置</span>';}
+    if(s.resume_full_text){_resumeFullTextCache=s.resume_full_text;document.getElementById('resumeFullInfo').textContent='全文'+s.resume_full_text.length+'字';document.getElementById('setResumeFull').value=s.resume_full_text;}
+    // 加载第一个搜索关键词到搜索栏
+    if(s.search_keywords){let first=s.search_keywords.split(',')[0].trim();if(first&&!document.getElementById('searchKeyword').value)document.getElementById('searchKeyword').value=first;}
+    // 加载默认城市
+    if(s.default_city){let sel=document.getElementById('searchCity');for(let o of sel.options){if(o.value===s.default_city){sel.value=s.default_city;break;}}}
   });
 }
 function saveSettings(){
-  let data={greeting_template:document.getElementById('setGreeting').value,ai_reply_style:document.getElementById('setStyle').value,daily_apply_limit:document.getElementById('setDailyLimit').value,min_reply_delay_sec:document.getElementById('setMinDelay').value,max_reply_delay_sec:document.getElementById('setMaxDelay').value,resume_summary:document.getElementById('setResume').value,wechat_id:document.getElementById('setWechat').value,search_keywords:document.getElementById('setSearchKeywords').value.replace(/\n/g,','),auto_reply_enabled:document.getElementById('setAutoReply').value,ai_base_url:document.getElementById('setAIBaseUrl').value,ai_model:document.getElementById('setAIModel').value};
+  let btn=document.querySelector('#tab-settings .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='保存中...';}
+  let data={greeting_template:document.getElementById('setGreeting').value,ai_reply_style:document.getElementById('setStyle').value,daily_apply_limit:document.getElementById('setDailyLimit').value,min_reply_delay_sec:document.getElementById('setMinDelay').value,max_reply_delay_sec:document.getElementById('setMaxDelay').value,resume_summary:document.getElementById('setResume').value,wechat_id:document.getElementById('setWechat').value,search_keywords:document.getElementById('setSearchKeywords').value.replace(/\n/g,','),default_city:document.getElementById('setDefaultCity').value,auto_reply_enabled:document.getElementById('setAutoReply').value,ai_base_url:document.getElementById('setAIBaseUrl').value,ai_model:document.getElementById('setAIModel').value,experience_min:document.getElementById('setExpMin').value,experience_max:document.getElementById('setExpMax').value,salary_min:document.getElementById('setSalaryMin').value,salary_max:document.getElementById('setSalaryMax').value,salary_unit:document.getElementById('setSalaryUnit').value};
   let key=document.getElementById('setAIApiKey').value;if(key)data.ai_api_key=key;
   fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()).then(()=>{
-    alert('设置已保存');
+    showToast('设置已保存','success');
+    let cityVal=document.getElementById('setDefaultCity').value;if(cityVal){let sel=document.getElementById('searchCity');for(let o of sel.options){if(o.value===cityVal){sel.value=cityVal;break;}}}
     if(key){document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--green);">已配置</span>';document.getElementById('setAIApiKey').placeholder='已配置';document.getElementById('setAIApiKey').value='';}
     refreshStatus();
+  }).catch(()=>showToast('保存失败','error')).finally(()=>{if(btn){btn.disabled=false;btn.textContent='保存设置';}});
+}
+function testSmartGreeting(){
+  let el=document.getElementById('greetingTestResult');
+  el.textContent='生成中...';el.style.color='var(--text-3)';
+  fetch('/api/settings/smart-greeting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_title:'AI开发实习生',company:'测试公司',salary:'10K',experience:'应届生',education:'本科'})}).then(r=>r.json()).then(d=>{
+    if(d.greeting){el.textContent=d.greeting.slice(0,60)+'...';el.style.color='var(--green)';}
+    else{el.textContent='生成失败';el.style.color='var(--red)';}
+  }).catch(()=>{el.textContent='请求失败';el.style.color='var(--red)';});
+}
+function uploadResume(){
+  const fileInput=document.getElementById('resumeFile');
+  const status=document.getElementById('resumeUploadStatus');
+  if(!fileInput.files.length){status.textContent='请选择文件';status.style.color='var(--red)';return;}
+  const file=fileInput.files[0];
+  const allowed=['.pdf','.txt','.md'];
+  const ext='.'+file.name.split('.').pop().toLowerCase();
+  if(!allowed.includes(ext)){status.textContent='仅支持 PDF/TXT/MD';status.style.color='var(--red)';return;}
+  if(file.size>5*1024*1024){status.textContent='文件过大(限5MB)';status.style.color='var(--red)';return;}
+  status.textContent='上传解析中...';status.style.color='var(--text-3)';
+  const fd=new FormData();fd.append('file',file);
+  fetch('/api/settings/resume/upload',{method:'POST',body:fd}).then(async r=>{
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||'上传失败');
+    status.textContent='解析成功('+d.text_length+'字)';
+    status.style.color='var(--green)';
+    document.getElementById('setResume').value=d.summary_preview||'';
+    document.getElementById('resumeFullInfo').textContent=d.full_text_length?'全文'+d.full_text_length+'字':'';
+    _resumeFullTextCache=null;
+    loadSettings();
+  }).catch(e=>{status.textContent=e.message;status.style.color='var(--red)';});
+}
+function toggleResumeFull(){
+  const ta=document.getElementById('setResumeFull');
+  const btn=document.querySelector('#resumeFullToggle button');
+  _resumeFullOpen=!_resumeFullOpen;
+  if(_resumeFullOpen){
+    ta.style.display='block';
+    btn.textContent='收起完整简历';
+    if(_resumeFullTextCache!==null){ta.value=_resumeFullTextCache;}
+    else{loadResumeFullText();}
+  }else{
+    ta.style.display='none';
+    btn.textContent='查看完整简历';
+  }
+}
+function loadResumeFullText(){
+  if(_resumeFullTextCache!==null){document.getElementById('setResumeFull').value=_resumeFullTextCache;return;}
+  fetch('/api/settings').then(r=>r.json()).then(d=>{
+    const full=d.settings.resume_full_text||'';
+    _resumeFullTextCache=full;
+    document.getElementById('setResumeFull').value=full;
+    if(full)document.getElementById('resumeFullInfo').textContent='全文'+full.length+'字';
   });
 }
 function updateAutoApplyBtn(on){
@@ -980,15 +1171,17 @@ function saveAutoApply(){
   let data={auto_apply_enabled:document.getElementById('setAutoApply').value,auto_apply_threshold:document.getElementById('setAutoApplyThreshold').value,auto_apply_hr_active_required:document.getElementById('setAutoApplyHrActive').value,filter_inactive_hr:document.getElementById('setFilterInactiveHr').value};
   fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()).then(()=>{
     document.getElementById('autoApplyStatus').innerHTML='<span style="color:var(--green);">自动投递配置已保存</span>';
+    showToast('自动投递配置已保存','success');
     setTimeout(()=>{document.getElementById('autoApplyStatus').innerHTML='';},3000);
-  });
+  }).catch(()=>showToast('保存失败','error'));
 }
 function triggerAutoApply(){
   document.getElementById('autoApplyStatus').innerHTML='<span style="color:var(--orange);">正在执行自动投递...</span>';
   fetch('/api/auto-apply/trigger',{method:'POST'}).then(r=>r.json()).then(d=>{
     document.getElementById('autoApplyStatus').innerHTML='<span style="color:var(--green);">自动投递已触发</span>';
+    showToast('自动投递已触发','success');
     setTimeout(()=>{document.getElementById('autoApplyStatus').innerHTML='';},3000);
-  }).catch(()=>{document.getElementById('autoApplyStatus').innerHTML='<span style="color:var(--red);">触发失败</span>';});
+  }).catch(()=>{document.getElementById('autoApplyStatus').innerHTML='<span style="color:var(--red);">触发失败</span>';showToast('触发失败','error');});
 }
 function loadAutoApplyLogs(){
   let el=document.getElementById('autoApplyLogs');
@@ -1096,6 +1289,7 @@ const idleTimer=(function(){
       remaining--;
       if(remaining<=0){
         clearInterval(countdownTimer);
+        clearTimeout(warnTimer);
         doRedirect();
       }else{
         countdownEl.textContent=' ('+remaining+'秒)';
@@ -1103,7 +1297,7 @@ const idleTimer=(function(){
     },1000);
 
     // 5秒后执行跳转
-    warnTimer=setTimeout(doRedirect,WARN_BEFORE);
+    warnTimer=setTimeout(()=>{clearInterval(countdownTimer);doRedirect();},WARN_BEFORE);
   }
 
   // 执行跳转
@@ -1216,14 +1410,14 @@ function loadFollowups(){
     });
     html+='</div>';
     bar.innerHTML=html;
-  });
+  }).catch(()=>{});
 }
 function showFollowupList(){let el=document.getElementById('followupList');if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function markFollowupDone(id,btn){
   fetch('/api/followups/'+id+'/done',{method:'POST'}).then(r=>r.json()).then(()=>{
-    showToast('已记录跟进');
+    showToast('已记录跟进','success');
     loadFollowups();
-  });
+  }).catch(()=>showToast('记录失败','error'));
 }
 
 // ══════════════════════════════════════
@@ -1245,7 +1439,7 @@ function loadTrend(days){
     });
     html+='</div>';
     chart.innerHTML=html;
-  });
+  }).catch(()=>{});
   // 漏斗图
   fetch('/api/stats/funnel').then(r=>r.json()).then(d=>{
     let el=document.getElementById('funnelChart');if(!el)return;
@@ -1263,7 +1457,7 @@ function loadTrend(days){
     });
     html+='</div>';
     el.innerHTML=html;
-  });
+  }).catch(()=>{});
 }
 
 // ══════════════════════════════════════
@@ -1287,15 +1481,15 @@ function saveScheduler(){
   let enabled=document.getElementById('setScheduleEnabled').value==='true';
   let cron=document.getElementById('setScheduleCron').value||'09:00,14:00';
   fetch('/api/scheduler/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled,cron:cron})}).then(r=>r.json()).then(d=>{
-    showToast(enabled?'定时任务已启用':'定时任务已停用');
+    showToast(enabled?'定时任务已启用':'定时任务已停用','success');
     loadSchedulerStatus();
-  });
+  }).catch(()=>showToast('保存定时任务失败','error'));
 }
 function stopScheduler(){
   fetch('/api/scheduler/stop',{method:'POST'}).then(r=>r.json()).then(()=>{
-    showToast('定时任务已停止');
+    showToast('定时任务已停止','success');
     loadSchedulerStatus();
-  });
+  }).catch(()=>showToast('停止定时任务失败','error'));
 }
 
 // 页面加载时初始化新功能
@@ -1307,6 +1501,211 @@ function stopScheduler(){
     if(tab==='settings'){loadSchedulerStatus();}
   };
 })();
+
+// ── 键盘快捷键 ──
+document.addEventListener('keydown',function(e){
+  let inInput=e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT';
+  // Escape 关闭模态框（任何时候生效）
+  if(e.key==='Escape'){
+    let modal=document.querySelector('.analyze-modal-overlay');
+    if(modal)modal.remove();
+  }
+  // Ctrl+S 保存设置（输入框中也生效）
+  if(e.ctrlKey&&e.key==='s'&&activeTab==='settings'){
+    e.preventDefault();
+    saveSettings();
+  }
+  // Ctrl+Enter 发送消息（输入框中也生效）
+  if(e.ctrlKey&&e.key==='Enter'&&activeTab==='chat'){
+    e.preventDefault();
+    sendManualMessage();
+  }
+  // 以下快捷键仅在非输入框时生效
+  if(inInput)return;
+  // Ctrl+1-5 切换Tab
+  if(e.ctrlKey&&e.key>='1'&&e.key<='5'){
+    e.preventDefault();
+    let tabs=['search','applications','chat','wechat','settings'];
+    let idx=parseInt(e.key)-1;
+    if(idx>=0&&idx<tabs.length)switchTab(tabs[idx]);
+  }
+  // Ctrl+D 深色模式
+  if(e.ctrlKey&&e.key==='d'){
+    e.preventDefault();
+    toggleDarkMode();
+  }
+  // / 聚焦搜索框
+  if(e.key==='/'){
+    e.preventDefault();
+    let inp=document.getElementById('searchKeyword');
+    if(inp)inp.focus();
+  }
+  // r 刷新当前列表
+  if(e.key==='r'&&!e.ctrlKey&&!e.metaKey){
+    e.preventDefault();
+    if(activeTab==='search')loadJobs();
+    else if(activeTab==='applications')loadApplications(appCurrentStatus);
+    else if(activeTab==='chat')loadConversations();
+    else if(activeTab==='wechat')loadWechatExchanges();
+  }
+  // ? 显示快捷键帮助
+  if(e.key==='?'){
+    e.preventDefault();
+    showShortcutHelp();
+  }
+});
+
+function showShortcutHelp(){
+  let html='<div style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998;display:flex;align-items:center;justify-content:center;" onclick="this.remove()">'+
+    '<div style="background:var(--surface);border-radius:12px;padding:24px 32px;max-width:400px;box-shadow:var(--shadow-lg);" onclick="event.stopPropagation()">'+
+    '<h3 style="margin:0 0 16px;font-size:15px;">键盘快捷键</h3>'+
+    '<table style="font-size:13px;border:none;box-shadow:none;">'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">Ctrl+1-5</kbd></td><td style="border:none;padding:4px 0;">切换标签页</td></tr>'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">/</kbd></td><td style="border:none;padding:4px 0;">聚焦搜索框</td></tr>'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">R</kbd></td><td style="border:none;padding:4px 0;">刷新当前列表</td></tr>'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">Ctrl+S</kbd></td><td style="border:none;padding:4px 0;">保存设置</td></tr>'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">Ctrl+Enter</kbd></td><td style="border:none;padding:4px 0;">发送消息</td></tr>'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">Esc</kbd></td><td style="border:none;padding:4px 0;">关闭弹窗</td></tr>'+
+    '<tr><td style="padding:4px 16px 4px 0;border:none;"><kbd style="background:var(--sidebar-bg);padding:2px 8px;border-radius:4px;font-size:12px;border:1px solid var(--border);">?</kbd></td><td style="border:none;padding:4px 0;">显示此帮助</td></tr>'+
+    '</table></div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+// ── CSV 导出 ──
+function exportCSV(){
+  let jobs=appAllJobs.length?appAllJobs:currentSearchJobs;
+  if(!jobs.length){showToast('没有数据可导出','warning');return;}
+  let headers=['岗位','公司','薪资','城市','综合分','CV分','质量分','状态','HR','链接'];
+  let rows=jobs.map(j=>[
+    j.job_title||j.title||'',
+    j.company||'',
+    j.salary||'',
+    j.city||'',
+    j.composite_score||'',
+    j.score||'',
+    j.quality_score||'',
+    j.status||'',
+    j.hr_name||'',
+    j.job_url||''
+  ]);
+  let csv='﻿'+headers.join(',')+'\n'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  let blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  let a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='boss_jobs_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('已导出 '+jobs.length+' 条数据','success');
+}
+
+// ── 深色模式 ──
+function toggleDarkMode(){
+  let isDark=document.documentElement.classList.toggle('dark');
+  localStorage.setItem('boss_dark_mode',isDark?'1':'0');
+  applyDarkMode(isDark);
+}
+function applyDarkMode(isDark){
+  let r=document.documentElement.style;
+  if(isDark){
+    r.setProperty('--surface','#1a1a2e');
+    r.setProperty('--bg','#16162a');
+    r.setProperty('--sidebar-bg','#1e1e36');
+    r.setProperty('--hover','#252542');
+    r.setProperty('--border','#2a2a4a');
+    r.setProperty('--text','#e8e8f0');
+    r.setProperty('--text-2','#b0b0c0');
+    r.setProperty('--text-3','#707088');
+  }else{
+    r.setProperty('--surface','');
+    r.setProperty('--bg','');
+    r.setProperty('--sidebar-bg','');
+    r.setProperty('--hover','');
+    r.setProperty('--border','');
+    r.setProperty('--text','');
+    r.setProperty('--text-2','');
+    r.setProperty('--text-3','');
+  }
+}
+// 初始化深色模式
+if(localStorage.getItem('boss_dark_mode')==='1'){
+  document.documentElement.classList.add('dark');
+  applyDarkMode(true);
+}
+
+// ── 搜索历史 ──
+const SEARCH_HISTORY_KEY='boss_search_history';
+const MAX_HISTORY=10;
+function saveSearchHistory(keyword,city){
+  if(!keyword)return;
+  let history=JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY)||'[]');
+  history=history.filter(h=>h.keyword!==keyword||h.city!==city);
+  history.unshift({keyword,city,time:Date.now()});
+  if(history.length>MAX_HISTORY)history=history.slice(0,MAX_HISTORY);
+  localStorage.setItem(SEARCH_HISTORY_KEY,JSON.stringify(history));
+}
+function getSearchHistory(){
+  return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY)||'[]');
+}
+function showSearchHistory(){
+  let history=getSearchHistory();
+  if(!history.length)return;
+  let el=document.getElementById('searchHistoryList');
+  if(!el){
+    let bar=document.querySelector('.search-bar');
+    if(!bar)return;
+    el=document.createElement('div');
+    el.id='searchHistoryList';
+    el.style.cssText='position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);box-shadow:var(--shadow-lg);z-index:100;max-height:200px;overflow-y:auto;display:none;';
+    bar.style.position='relative';
+    bar.appendChild(el);
+  }
+  el.innerHTML='<div style="padding:6px 10px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">搜索历史<button class="btn btn-xs btn-secondary" onclick="clearSearchHistory()">清空</button></div>'+
+    history.map(h=>'<div style="padding:6px 10px;font-size:13px;cursor:pointer;display:flex;gap:8px;" onmouseover="this.style.background=\'var(--hover)\'" onmouseout="this.style.background=\'\'" onclick="fillSearch(\''+h.keyword.replace(/'/g,"\\'")+'\',\''+h.city+'\')"><span>'+h.keyword+'</span><span style="color:var(--text-3);font-size:11px;">'+h.city+'</span></div>').join('');
+  el.style.display='block';
+}
+function hideSearchHistory(){let el=document.getElementById('searchHistoryList');if(el)el.style.display='none';}
+function fillSearch(kw,city){document.getElementById('searchKeyword').value=kw;document.getElementById('searchCity').value=city;hideSearchHistory();}
+function clearSearchHistory(){localStorage.removeItem(SEARCH_HISTORY_KEY);hideSearchHistory();}
+
+// 搜索框聚焦时显示历史
+document.addEventListener('DOMContentLoaded',function(){
+  let inp=document.getElementById('searchKeyword');
+  if(inp){
+    inp.addEventListener('focus',showSearchHistory);
+    inp.addEventListener('blur',()=>setTimeout(hideSearchHistory,200));
+  }
+});
+
+// 保存搜索历史（在 doSearch 和 batchSearch 中调用）
+let _origDoSearch=window.doSearch;
+if(_origDoSearch){window.doSearch=function(){let kw=document.getElementById('searchKeyword').value;let city=document.getElementById('searchCity').value;if(kw)saveSearchHistory(kw,city);return _origDoSearch.apply(this,arguments);};}
+
+// ── 未读消息通知 ──
+function updateChatBadge(){
+  fetch('/api/conversations').then(r=>r.json()).then(d=>{
+    let convs=d.conversations||[];
+    let unread=convs.reduce((s,c)=>s+(c.unread_count||0),0);
+    let badge=document.getElementById('chatBadge');
+    if(badge){
+      if(unread>0){badge.textContent=unread;badge.style.display='inline-block';}
+      else{badge.style.display='none';}
+    }
+  }).catch(()=>{});
+}
+function flashChatBadge(){
+  let badge=document.getElementById('chatBadge');
+  if(!badge)return;
+  badge.style.animation='none';
+  badge.offsetHeight;
+  badge.style.animation='badgePulse .6s ease 3';
+  // 如果不在聊天tab，显示toast
+  if(activeTab!=='chat'){
+    showToast('收到新消息','info');
+  }
+}
+// WS断开时才轮询未读数
+setInterval(()=>{if(!ws||ws.readyState!==1)updateChatBadge();},30000);
+updateChatBadge();
 </script>
 </body>
 </html>

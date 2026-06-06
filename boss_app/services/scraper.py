@@ -21,11 +21,14 @@ from urllib.parse import quote_plus
 
 from playwright.async_api import async_playwright
 
-from ..core.database import get_db
-from ..models.settings import get_setting
+from ..config import CITY_MAP as CITIES
 
-# Windows 编码修复
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+# Windows 编码修复（仅在 stdout 未被包装时）
+if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, io.TextIOWrapper):
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    except Exception:
+        pass
 
 # ── 配置 ──
 TODAY = date.today().isoformat()
@@ -39,67 +42,6 @@ KEYWORDS = [
     "化工",
     "外贸",
 ]
-
-# BOSS直聘城市代码
-CITIES = {
-    # 山东省
-    "济南": "101120100",
-    "青岛": "101120200",
-    "淄博": "101120300",
-    "德州": "101120400",
-    "烟台": "101120500",
-    "潍坊": "101120600",
-    "济宁": "101120700",
-    "泰安": "101120800",
-    "临沂": "101120900",
-    "菏泽": "101121000",
-    "滨州": "101121100",
-    "东营": "101121200",
-    "威海": "101121300",
-    "枣庄": "101121400",
-    "日照": "101121500",
-    "聊城": "101121700",
-    # 一线城市
-    "北京": "101010100",
-    "上海": "101020100",
-    "广州": "101280100",
-    "深圳": "101280600",
-    # 新一线城市
-    "成都": "101270100",
-    "杭州": "101210100",
-    "武汉": "101200100",
-    "南京": "101190100",
-    "重庆": "101040100",
-    "西安": "101110100",
-    "长沙": "101250100",
-    "天津": "101030100",
-    "苏州": "101190400",
-    "郑州": "101180100",
-    "东莞": "101281600",
-    "沈阳": "101070100",
-    "宁波": "101210400",
-    "昆明": "101290100",
-    # 其他省会城市
-    "合肥": "101220100",
-    "福州": "101230100",
-    "厦门": "101230200",
-    "南昌": "101240100",
-    "贵阳": "101260100",
-    "南宁": "101300100",
-    "太原": "101100100",
-    "石家庄": "101090100",
-    "哈尔滨": "101050100",
-    "长春": "101060100",
-    "兰州": "101160100",
-    "乌鲁木齐": "101130100",
-    "呼和浩特": "101080100",
-    "拉萨": "101140100",
-    "西宁": "101150100",
-    "银川": "101170100",
-    "海口": "101310100",
-    "三亚": "101310200",
-    "全国": "100010000",
-}
 
 OUTPUT_DIR = Path.home() / "AI" / "岗位日报"
 # 相对于项目根目录（从 boss_app/services/ 向上两级）
@@ -821,23 +763,60 @@ class BossScraper:
                     if (!title || title.length < 2 || title.length > 60) return;
                     if (/公司|工商|安全|竞争力|评论|相似|推荐/.test(title)) return;
 
-                    // 公司名称：薪资后找不含数字/经验/学历的行
+                    // 公司名称：尝试多种方法
                     let company = '';
-                    const skipPat = /\\d+[-~]|经验|应届|在校|本科|硕士|博士|大专|中专|学历|不限|K\\/|元\\/|天\\/周|薪|·|五险|社保|福利/i;
-                    for (let i = (salIdx >= 0 ? salIdx + 1 : 1); i < Math.min(lines.length, (salIdx >= 0 ? salIdx + 8 : 8)); i++) {
-                        const l = lines[i];
-                        if (l.length >= 2 && l.length <= 40 && !skipPat.test(l) && !/^\\d/.test(l)) {
-                            company = l;
-                            break;
+
+                    // 方法1: 从BOSS卡片DOM中找 .company-name 或 .boss-name 或 .name
+                    const companyEl = card.querySelector('.company-name, .boss-name, [class*="company-name"], [class*="boss-name"]');
+                    if (companyEl) {
+                        company = (companyEl.innerText || '').trim();
+                    }
+
+                    // 方法2: 尝试从链接/卡片的title属性提取（BOSS常把公司名放在title里）
+                    if (!company) {
+                        const titleAttr = card.getAttribute('title') || a.getAttribute('title') || '';
+                        // title格式可能为"岗位名 - 公司名 - 城市"或类似
+                        const titleParts = titleAttr.split(/[-|·]/).map(s => s.trim()).filter(Boolean);
+                        for (const part of titleParts) {
+                            if (part !== title && part.length >= 2 && part.length <= 30 && !/\\d/.test(part)) {
+                                company = part;
+                                break;
+                            }
                         }
                     }
 
-                    // 城市
+                    // 方法3: 文本行解析（更宽松的skip规则）
+                    if (!company) {
+                        const skipPat = /\\d+[-~]\\d|经验|应届|在校|本科|硕士|博士|大专|中专|中技|高中|学历|五险|社保/i;
+                        for (let i = (salIdx >= 0 ? salIdx + 1 : 1); i < Math.min(lines.length, (salIdx >= 0 ? salIdx + 6 : 6)); i++) {
+                            const l = lines[i];
+                            // 2-30字，含中文字符，不以数字开头，不含skip关键词
+                            if (l.length >= 2 && l.length <= 30 && /[一-鿿]/.test(l) && !/^\\d/.test(l) && !skipPat.test(l)) {
+                                company = l;
+                                break;
+                            }
+                        }
+                    }
+
+                    // 城市：尝试多种方法
                     let city = '';
+
+                    // 方法1: 找带·的行
                     for (const l of lines) {
                         if (l.includes('·') && l.length < 30) {
                             city = l.split('·')[0].trim();
-                            break;
+                            if (city.length >= 2 && city.length <= 10) break;
+                            city = '';
+                        }
+                    }
+
+                    // 方法2: 找 .job-area 或 .area-name
+                    if (!city) {
+                        const areaEl = card.querySelector('.job-area, .area-name, [class*="area"], [class*="city"]');
+                        if (areaEl) {
+                            const areaText = (areaEl.innerText || '').trim();
+                            const cityMatch = areaText.match(/^([^-·]+)/);
+                            if (cityMatch) city = cityMatch[1].trim();
                         }
                     }
 
@@ -845,7 +824,7 @@ class BossScraper:
                     let experience = lines.find(x => /^\\d+[-~]\\d+年|^\\d+年|^经验不限$|^应届$|^在校$/.test(x) && x.length < 20) || '';
                     let education = lines.find(x => /^(本科|硕士|博士|大专|中专|中技|高中|学历不限|不限)$/.test(x)) || '';
 
-                    cards.push({title, salary, company, city, experience, education, url: href, _debug: lines.slice(0, 3).join(' | ')});
+                    cards.push({title, salary, company, city, experience, education, url: href, _debug: lines.slice(0, 5).join(' | ')});
                 });
                 return {cards, debug: debugInfo};
             }""")

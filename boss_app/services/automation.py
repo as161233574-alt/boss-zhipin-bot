@@ -8,11 +8,135 @@ import json
 import random
 import re
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 from playwright.async_api import Locator
 
 from .scraper import BossScraper, async_pause, decode_salary, STATE_FILE
+
+
+def _keywords_match(job_title: str, job_desc: str, search_keywords: str) -> bool:
+    """检查岗位是否匹配搜索关键词。过滤通用词，支持子串拆分匹配。"""
+    if not search_keywords or not search_keywords.strip():
+        return True
+
+    title_lower = (job_title or "").lower()
+    desc_lower = (job_desc or "").lower()
+    combined = title_lower + " " + desc_lower
+
+    raw_keywords = [k.strip().lower() for k in re.split(r'[,，、\s]+', search_keywords) if k.strip()]
+    generic_words = {"实习", "实习生", "岗位", "招聘", "工程师", "开发", "应届", "兼职", "全职"}
+    core_keywords = [k for k in raw_keywords if len(k) >= 2 and k not in generic_words]
+
+    if not core_keywords:
+        return True
+
+    for kw in core_keywords:
+        if kw in combined:
+            return True
+
+    # 拆分长关键词为子串再匹配
+    for kw in core_keywords:
+        if len(kw) >= 4:
+            parts = re.findall(r'[a-z]+', kw)
+            cleaned = re.sub(r'实习|生|岗位|招聘|应届|兼职|全职', '', kw)
+            cn_parts = re.findall(r'[一-鿿]{2,}', cleaned)
+            parts.extend(cn_parts)
+            for part in parts:
+                if len(part) >= 2 and part not in generic_words and part in combined:
+                    return True
+
+    return False
+
+
+def check_job_match(job_data: dict) -> tuple[bool, str]:
+    """检查岗位是否匹配用户的期望条件。
+
+    返回 (is_match, reason)
+    """
+    from ..models.settings import get_setting
+
+    # 获取用户设置（带容错）
+    try:
+        exp_min = int(get_setting("experience_min", "0"))
+    except (ValueError, TypeError):
+        exp_min = 0
+    try:
+        exp_max = int(get_setting("experience_max", "3"))
+    except (ValueError, TypeError):
+        exp_max = 3
+    try:
+        salary_min = float(get_setting("salary_min", "0") or "0")
+    except (ValueError, TypeError):
+        salary_min = 0
+    try:
+        salary_max = float(get_setting("salary_max", "999") or "999")
+    except (ValueError, TypeError):
+        salary_max = 999
+    salary_unit = get_setting("salary_unit", "K")
+
+    # 检查岗位标题是否包含关键词（可选过滤）
+    search_keywords = get_setting("search_keywords", "")
+    if search_keywords:
+        job_title = job_data.get("title", "") or job_data.get("job_title", "")
+        job_desc = (job_data.get("description") or "")[:500]
+        if not _keywords_match(job_title, job_desc, search_keywords):
+            return False, "关键词不匹配: 岗位标题不含搜索关键词"
+
+    # 检查经验要求
+    experience = job_data.get("experience", "")
+    if experience:
+        # 解析经验要求，如"1-3年"、"应届生"、"经验不限"
+        exp_match = re.search(r"(\d+)\s*[-~]\s*(\d+)\s*年", experience)
+        if exp_match:
+            job_exp_min = int(exp_match.group(1))
+            job_exp_max = int(exp_match.group(2))
+            # 用户经验范围与岗位要求不匹配
+            if exp_max < job_exp_min or exp_min > job_exp_max:
+                return False, f"经验不匹配: 岗位要求{experience}, 用户期望{exp_min}-{exp_max}年"
+        elif "应届" in experience or "经验不限" in experience:
+            pass  # 应届生可以投递
+        elif "年以上" in experience:
+            exp_year_match = re.search(r"(\d+)\s*年以上", experience)
+            if exp_year_match:
+                job_exp_min = int(exp_year_match.group(1))
+                if exp_max < job_exp_min:
+                    return False, f"经验不匹配: 岗位要求{experience}, 用户期望{exp_min}-{exp_max}年"
+
+    # 检查薪资范围
+    salary = job_data.get("salary", "")
+    if salary:
+        salary_decoded = decode_salary(salary)
+        # 解析薪资，如"15-25K"、"200-300元/天"
+        salary_match = re.search(r"(\d+)\s*[-~]\s*(\d+)\s*([Kk]|元/天|元/月)?", salary_decoded)
+        if salary_match:
+            job_salary_min = float(salary_match.group(1))
+            job_salary_max = float(salary_match.group(2))
+            job_unit = salary_match.group(3) or "K"
+
+            # 统一单位比较
+            if job_unit == "K" and salary_unit == "K":
+                if job_salary_min > salary_max or job_salary_max < salary_min:
+                    return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
+            elif job_unit == "元/天" and salary_unit == "元/天":
+                if job_salary_min > salary_max or job_salary_max < salary_min:
+                    return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
+            else:
+                # 单位不同，需要转换
+                # K/月 -> 元/天: K * 1000 / 21.75
+                # 元/天 -> K/月: 元 * 21.75 / 1000
+                if job_unit == "K" and salary_unit == "元/天":
+                    job_min_daily = job_salary_min * 1000 / 21.75
+                    job_max_daily = job_salary_max * 1000 / 21.75
+                    if job_min_daily > salary_max or job_max_daily < salary_min:
+                        return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
+                elif job_unit == "元/天" and salary_unit == "K":
+                    job_min_monthly = job_salary_min * 21.75 / 1000
+                    job_max_monthly = job_salary_max * 21.75 / 1000
+                    if job_min_monthly > salary_max or job_max_monthly < salary_min:
+                        return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
+
+    return True, "匹配"
 from ..core.database import init_db, get_db
 from ..models.application import (
     add_application,
@@ -270,7 +394,8 @@ class BossAutomation(BossScraper):
                 pass
             return True
         except Exception:
-            return True
+            print("  ⚠️ 安全检查: 页面异常，无法检测")
+            return False
 
     # ══════════════════════════════════════
     #  Session 保活 & 心跳
@@ -327,7 +452,7 @@ class BossAutomation(BossScraper):
     #  自动投递
     # ══════════════════════════════════════
 
-    async def apply_to_job(self, job_url: str, greeting: Optional[str] = None) -> dict:
+    async def apply_to_job(self, job_url: str, greeting: Optional[str] = None, job_data: dict = None) -> dict:
         """
         对单个岗位执行投递流程:
         1. 打开详情页
@@ -335,6 +460,14 @@ class BossAutomation(BossScraper):
         3. 发送招呼语
         返回 {success, message, application_id}
         """
+        # 缓存 DB 查询，避免同一 URL 多次查询
+        _cached_app = None
+        def _get_app():
+            nonlocal _cached_app
+            if _cached_app is None:
+                _cached_app = get_application_by_url(job_url)
+            return _cached_app
+
         if not job_url:
             return {"success": False, "message": "缺少岗位链接"}
 
@@ -343,6 +476,29 @@ class BossAutomation(BossScraper):
         daily_limit = int(get_setting("daily_apply_limit", "15"))
         if today_count >= min(daily_limit, MAX_APPLY_PER_DAY):
             return {"success": False, "message": f"已达今日上限({today_count}条)"}
+
+        # 48小时内已投递过的岗位不再重复投递
+        existing_app = _get_app()
+        if existing_app:
+            try:
+                from datetime import datetime, timedelta
+                # 优先用 greeting_sent_at，其次用 updated_at（status=applied 时）
+                ts = existing_app.get("greeting_sent_at") or ""
+                if not ts and existing_app.get("status") == "applied":
+                    ts = existing_app.get("updated_at") or ""
+                if ts:
+                    sent_time = datetime.fromisoformat(ts.replace(" ", "T").split("+")[0].split(".")[0])
+                    if datetime.now() - sent_time < timedelta(hours=48):
+                        return {"success": False, "message": "48小时内已投递过", "skipped": True}
+            except Exception:
+                pass
+
+        # 经验匹配和薪资匹配检查
+        if job_data:
+            is_match, reason = check_job_match(job_data)
+            if not is_match:
+                print(f"  ⏭️ 跳过: {reason}")
+                return {"success": False, "message": reason, "skipped": True}
 
         print(f"  🚀 投递: {job_url[:60]}...")
 
@@ -355,7 +511,7 @@ class BossAutomation(BossScraper):
 
             # 检查是否已投递
             if await self._has_text("已沟通", "继续沟通"):
-                existing = get_application_by_url(job_url)
+                existing = _get_app()
                 if existing and existing["status"] == "pending":
                     update_application_status(existing["id"], "applied")
                 return {"success": True, "message": "已投递过", "already_applied": True}
@@ -441,10 +597,20 @@ class BossAutomation(BossScraper):
             chat_input = await self._find_element(SELECTORS["chat_input"], timeout_ms=5000)
 
             # 发送招呼语
-            greeting_text = greeting or get_setting(
-                "greeting_template",
-                "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？",
-            )
+            if not greeting:
+                # 使用智能打招呼生成
+                from .replier import generate_smart_greeting
+                resume_summary = get_setting("resume_summary", "")
+                greeting_text = generate_smart_greeting(
+                    job_title=job_data.get("title", "") if job_data else "",
+                    company=job_data.get("company", "") if job_data else "",
+                    salary=job_data.get("salary", "") if job_data else "",
+                    experience=job_data.get("experience", "") if job_data else "",
+                    education=job_data.get("education", "") if job_data else "",
+                    resume_summary=resume_summary,
+                )
+            else:
+                greeting_text = greeting
             greeting_sent = False
             if chat_input and greeting_text:
                 greeting_sent = await self.send_message(greeting_text)
@@ -454,7 +620,7 @@ class BossAutomation(BossScraper):
                     print(f"  ⚠️ 招呼语发送失败")
 
             # 记录到 SQLite
-            existing = get_application_by_url(job_url)
+            existing = _get_app()
             if existing:
                 if greeting_sent:
                     update_application_status(existing["id"], "applied", greeting_text)
@@ -518,7 +684,7 @@ class BossAutomation(BossScraper):
             except Exception:
                 pass
 
-            app_record = get_application_by_url(job_url) or {}
+            app_record = _get_app() or {}
             hr_name = hr_name or app_record.get("hr_name", "")
             hr_company = app_record.get("company", "")
             job_title = app_record.get("job_title", "")
@@ -546,7 +712,19 @@ class BossAutomation(BossScraper):
                 print(f"  ⏳ 等待 {delay:.0f}s 后投递下一条...")
                 await asyncio.sleep(delay)
 
-            result = await self.apply_to_job(url, greeting_template)
+            # 获取岗位数据用于匹配检查
+            job = get_application_by_url(url)
+            job_data = None
+            if job:
+                job_data = {
+                    "title": job.get("job_title", ""),
+                    "company": job.get("company", ""),
+                    "salary": job.get("salary", ""),
+                    "experience": job.get("experience", ""),
+                    "education": job.get("education", ""),
+                }
+
+            result = await self.apply_to_job(url, greeting_template, job_data)
             results.append(result)
 
             if not result["success"] and "上限" in result.get("message", ""):
@@ -895,105 +1073,34 @@ class BossAutomation(BossScraper):
         print(f"  ⚠️ securityId 获取失败（3次重试），HR: {hr_name}")
         return ""
 
-    async def send_wechat(self, hr_name: str = "") -> bool:
-        """通过 BOSS API 发起交换，等弹窗出现后点「确定」。"""
+    async def _exchange_contact(self, hr_name: str, exchange_type: int, selector_key: str, label: str) -> bool:
+        """通过 BOSS API 交换联系方式（微信 type=2 / 电话 type=1），等弹窗后点「确定」。"""
         try:
             sid = await self._get_chat_security_id(hr_name)
 
             if sid:
                 await self.page.evaluate(
                     """
-                    async (sid) => {
+                    async (args) => {
                         await fetch('https://www.zhipin.com/wapi/zpchat/exchange/test', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/x-www-form-urlencoded', 'x-requested-with': 'XMLHttpRequest'},
-                            body: 'securityId=' + encodeURIComponent(sid) + '&type=2&friendSource=0',
+                            body: 'securityId=' + encodeURIComponent(args.sid) + '&type=' + args.type + '&friendSource=0',
                             credentials: 'include',
                         });
                     }
-                """,
-                    sid,
+                    """,
+                    {"sid": sid, "type": exchange_type},
                 )
-                print("  [换微信] API /exchange/test 已调用")
+                print(f"  [换{label}] API /exchange/test (type={exchange_type}) 已调用")
             else:
-                btn = await self._find_element(SELECTORS["wechat_share_btn"], timeout_ms=5000)
+                btn = await self._find_element(SELECTORS[selector_key], timeout_ms=5000)
                 if not btn:
-                    print("  ⚠️ send_wechat: 无法获取 securityId 且未找到按钮")
+                    print(f"  ⚠️ send_{label}: 无法获取 securityId 且未找到按钮")
                     return False
                 await btn.click()
-                print("  [换微信] 已点击换微信按钮")
+                print(f"  [换{label}] 已点击换{label}按钮")
 
-            # 等弹窗 → 点「确定」
-            confirm_clicked = await self.page.evaluate("""() => {
-                return new Promise((resolve) => {
-                    let tries = 0;
-                    const check = () => {
-                        const btns = document.querySelectorAll('span');
-                        for (const b of btns) {
-                            if (b.innerText.trim() === '确定' && b.offsetParent !== null) {
-                                const parent = b.closest('.secure-exchange, .sentence-popover, [class*="exchange"], [class*="popover"]');
-                                if (parent) {
-                                    b.click();
-                                    resolve(true);
-                                    return;
-                                }
-                            }
-                        }
-                        const all = document.querySelectorAll('.btn-sure-v2, span');
-                        for (const el of all) {
-                            if (el.innerText.trim() === '确定' && el.offsetParent !== null && !el.closest('.btn-outline-v2')) {
-                                el.click();
-                                resolve(true);
-                                return;
-                            }
-                        }
-                        if (++tries < 30) setTimeout(check, 300);
-                        else resolve(false);
-                    };
-                    check();
-                });
-            }""")
-            if confirm_clicked:
-                await asyncio.sleep(random.uniform(0.5, 1))
-                print("  [换微信] 已点确定按钮")
-                return True
-
-            print("  [换微信] 超时: 未找到确定按钮")
-            return False
-
-        except Exception as e:
-            print(f"  ⚠️ send_wechat 失败: {e}")
-            return False
-
-    async def send_phone(self, hr_name: str = "") -> bool:
-        """通过 BOSS API 交换手机号（type=1），等弹窗出现后点「确定」。"""
-        try:
-            sid = await self._get_chat_security_id(hr_name)
-
-            if sid:
-                await self.page.evaluate(
-                    """
-                    async (sid) => {
-                        await fetch('https://www.zhipin.com/wapi/zpchat/exchange/test', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/x-www-form-urlencoded', 'x-requested-with': 'XMLHttpRequest'},
-                            body: 'securityId=' + encodeURIComponent(sid) + '&type=1&friendSource=0',
-                            credentials: 'include',
-                        });
-                    }
-                """,
-                    sid,
-                )
-                print("  [换电话] API /exchange/test (type=1) 已调用")
-            else:
-                btn = await self._find_element(SELECTORS["phone_share_btn"], timeout_ms=5000)
-                if not btn:
-                    print("  ⚠️ send_phone: 无法获取 securityId 且未找到按钮")
-                    return False
-                await btn.click()
-                print("  [换电话] 已点击换电话按钮")
-
-            # 等弹窗 → 点「确定」
             confirm_clicked = await self.page.evaluate("""() => {
                 return new Promise((resolve) => {
                     let tries = 0;
@@ -1025,15 +1132,23 @@ class BossAutomation(BossScraper):
             }""")
             if confirm_clicked:
                 await asyncio.sleep(random.uniform(0.5, 1))
-                print("  [换电话] 已点确定按钮")
+                print(f"  [换{label}] 已点确定按钮")
                 return True
 
-            print("  [换电话] 超时: 未找到确定按钮")
+            print(f"  [换{label}] 超时: 未找到确定按钮")
             return False
 
         except Exception as e:
-            print(f"  ⚠️ send_phone 失败: {e}")
+            print(f"  ⚠️ send_{label} 失败: {e}")
             return False
+
+    async def send_wechat(self, hr_name: str = "") -> bool:
+        """通过 BOSS API 发起微信交换。"""
+        return await self._exchange_contact(hr_name, 2, "wechat_share_btn", "微信")
+
+    async def send_phone(self, hr_name: str = "") -> bool:
+        """通过 BOSS API 交换手机号。"""
+        return await self._exchange_contact(hr_name, 1, "phone_share_btn", "电话")
 
     async def send_resume(self) -> bool:
         """点击「发简历」按钮，等弹窗后点「发送」确认。"""
@@ -1257,12 +1372,10 @@ class BossAutomation(BossScraper):
                 result.setdefault("new_conversations", []).append(hr_name)
             else:
                 conv_id = matched_conv["id"]
-                # 提取的名字比 DB 更精确时自动修正
+                # 提取的名字比 DB 更精确时自动修正（仅当新名字更长/更完整）
                 if extracted_name and len(extracted_name) >= 2:
                     old_name = matched_conv.get("hr_name", "")
-                    if old_name != extracted_name and (
-                        old_name in extracted_name or extracted_name in old_name or len(extracted_name) < len(old_name)
-                    ):
+                    if old_name != extracted_name and old_name in extracted_name:
                         try:
                             get_db().execute("UPDATE conversations SET hr_name=? WHERE id=?", (extracted_name, conv_id))
                             get_db().commit()
@@ -1364,7 +1477,6 @@ class BossAutomation(BossScraper):
                 has_reply_after = any(clean_msgs[j]["sender"] == "me" for j in range(i + 1, len(clean_msgs)))
                 if not has_reply_after:
                     unreplied_hr_msg = m["content"]
-                    new_count = 1
                     print(f"  [监控] 待回复HR消息: {m['content'][:60]}...")
                 break
 
@@ -1377,6 +1489,30 @@ class BossAutomation(BossScraper):
                 today_replies = get_today_auto_reply_count()
                 if today_replies >= MAX_AUTO_REPLY_PER_DAY:
                     continue
+
+                # 48小时内已回复过的会话不再重复回复（防止骚扰）
+                # 但如果有新的未读HR消息，仍然回复
+                try:
+                    from datetime import datetime, timedelta
+                    # 检查最近一条HR消息的时间
+                    recent_hr = get_db().execute(
+                        "SELECT created_at FROM messages WHERE conversation_id=? AND sender='hr' ORDER BY created_at DESC LIMIT 1",
+                        (conv_id,)
+                    ).fetchone()
+                    recent_me = get_db().execute(
+                        "SELECT created_at FROM messages WHERE conversation_id=? AND sender='me' ORDER BY created_at DESC LIMIT 1",
+                        (conv_id,)
+                    ).fetchone()
+                    if recent_hr and recent_me and recent_hr["created_at"] and recent_me["created_at"]:
+                        hr_time = datetime.fromisoformat(recent_hr["created_at"].replace(" ", "T").split("+")[0].split(".")[0])
+                        me_time = datetime.fromisoformat(recent_me["created_at"].replace(" ", "T").split("+")[0].split(".")[0])
+                        # 只有当最近的HR消息早于我的回复，且间隔<48小时时才跳过
+                        # （即没有新的HR消息，我之前已经回复过了）
+                        if hr_time <= me_time and datetime.now() - me_time < timedelta(hours=48):
+                            print(f"  [监控] 跳过 {matched_conv.get('hr_name')}: 48小时内已回复过且无新消息")
+                            continue
+                except Exception:
+                    pass
 
                 try:
                     from .replier import generate_reply

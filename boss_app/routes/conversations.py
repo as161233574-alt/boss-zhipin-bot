@@ -91,6 +91,7 @@ def get_conversation_detail(conv_id: int):
 @router.get("/api/conversations/{conv_id}/messages")
 def get_conversation_messages(conv_id: int, limit: int = 50):
     # 这个接口被前端频繁轮询，必须只读本地缓存，不能每次都控制浏览器。
+    limit = min(max(limit, 1), 200)
     return {"messages": _clean_messages_for_web(get_messages(conv_id, limit))}
 
 
@@ -114,6 +115,7 @@ async def sync_conversation_messages(conv_id: int):
     sync_lock = state.browser_sync_lock
     if sync_lock is None:
         sync_lock = asyncio.Lock()
+        state.browser_sync_lock = sync_lock
     if sync_lock.locked():
         return {
             "success": False,
@@ -160,14 +162,24 @@ async def send_manual_message(conv_id: int, req: SendMessageRequest):
     if not hr_name:
         raise HTTPException(status_code=400, detail="会话缺少HR姓名")
 
-    # 先打开对应会话
-    opened = await state.automation.open_conversation_by_name(hr_name)
-    if not opened:
-        raise HTTPException(status_code=500, detail=f"无法在浏览器中打开 {hr_name} 的会话")
+    # 获取或创建同步锁
+    sync_lock = state.browser_sync_lock
+    if sync_lock is None:
+        sync_lock = asyncio.Lock()
+        state.browser_sync_lock = sync_lock
 
-    browser_ok = await state.automation.send_message(req.content, False)
-    if not browser_ok:
-        raise HTTPException(status_code=500, detail="浏览器发送失败，本地不会写入这条消息")
+    try:
+        async with sync_lock:
+            # 先打开对应会话
+            opened = await asyncio.wait_for(state.automation.open_conversation_by_name(hr_name), timeout=8)
+            if not opened:
+                raise HTTPException(status_code=500, detail=f"无法在浏览器中打开 {hr_name} 的会话")
+
+            browser_ok = await asyncio.wait_for(state.automation.send_message(req.content, False), timeout=10)
+            if not browser_ok:
+                raise HTTPException(status_code=500, detail="浏览器发送失败，本地不会写入这条消息")
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="浏览器操作超时")
 
     add_message(conv_id, "me", req.content, ai_generated=False)
     update_conversation_last_message(conv_id, req.content, "me")

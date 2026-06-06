@@ -6,6 +6,9 @@ API 密钥从环境变量 AI_API_KEY 读取，不再硬编码。
 """
 
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from boss_app.models.settings import set_setting
 
 CONFIG = {

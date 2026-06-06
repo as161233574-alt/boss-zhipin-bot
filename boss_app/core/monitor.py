@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from boss_state import get_setting
+from boss_app.models.settings import get_setting
 
 
 class ChatMonitor:
@@ -38,7 +38,7 @@ class ChatMonitor:
         """停止监控后台任务。"""
         if self.task is not None and not self.task.done():
             self.task.cancel()
-            self.task = None
+        self.task = None
 
     def pause(self) -> None:
         """暂停监控循环（不取消任务）。"""
@@ -67,7 +67,6 @@ class ChatMonitor:
 
         # 验证 AI 回复系统
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "interview"))
             from llm_client import _load_ai_config
 
             cfg = _load_ai_config()
@@ -83,12 +82,11 @@ class ChatMonitor:
             print("[监控] 执行首次会话扫描...")
             try:
                 result = await automation.run_chat_monitor_cycle()
-                if result.get("new_messages", 0) > 0:
+                has_new = result.get("new_messages", 0) > 0 or result.get("new_conversations")
+                if has_new:
                     await ws_manager.broadcast({"type": "new_messages", "summary": result})
                 if result.get("replies_sent", 0) > 0:
                     await ws_manager.broadcast({"type": "auto_reply_sent", "summary": result})
-                if result.get("new_conversations"):
-                    await ws_manager.broadcast({"type": "new_messages"})
             except Exception as e:
                 print(f"  [监控] 首次扫描异常: {e}")
 
@@ -98,7 +96,8 @@ class ChatMonitor:
             try:
                 min_delay = int(get_setting("min_reply_delay_sec", "15"))
                 max_delay = int(get_setting("max_reply_delay_sec", "20"))
-                delay = random.randint(min(min_delay, max_delay), max(min_delay, max_delay) + 5)
+                lo, hi = min(min_delay, max_delay), max(min_delay, max_delay)
+                delay = random.randint(lo, hi)
                 await asyncio.sleep(delay)
 
                 if self.paused:
@@ -137,22 +136,11 @@ class ChatMonitor:
 
                 result = await automation.run_chat_monitor_cycle()
 
-                if result.get("new_messages", 0) > 0:
-                    await ws_manager.broadcast(
-                        {
-                            "type": "new_messages",
-                            "summary": result,
-                        }
-                    )
+                has_new = result.get("new_messages", 0) > 0 or result.get("new_conversations")
+                if has_new:
+                    await ws_manager.broadcast({"type": "new_messages", "summary": result})
                 if result.get("replies_sent", 0) > 0:
-                    await ws_manager.broadcast(
-                        {
-                            "type": "auto_reply_sent",
-                            "summary": result,
-                        }
-                    )
-                if result.get("new_conversations"):
-                    await ws_manager.broadcast({"type": "new_messages"})
+                    await ws_manager.broadcast({"type": "auto_reply_sent", "summary": result})
                 if result.get("wechat_exchanged"):
                     await ws_manager.broadcast({"type": "wechat_exchanged"})
 

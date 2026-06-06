@@ -25,7 +25,7 @@ from ..models.settings import (
     get_daily_stats,
 )
 from ..core import state
-from boss_automation import BossAutomation
+from boss_app.services.automation import BossAutomation
 
 router = APIRouter()
 
@@ -97,8 +97,9 @@ async def start_automation():
         import traceback
         detail = str(e) or type(e).__name__
         traceback.print_exc()
+        print(f"[系统] 浏览器启动失败: {detail}")
         state.automation = None
-        return {"status": "error", "message": f"浏览器启动失败: {detail}"}
+        return {"status": "error", "message": "浏览器启动失败，请检查浏览器安装状态后重试"}
 
     if state.automation is None or state.automation.page is None:
         state.automation = None
@@ -206,15 +207,21 @@ async def resume_monitor():
 # ══════════════════════════════════════
 
 
+class IdleRedirectLog(BaseModel):
+    timestamp: str = ""
+    from_url: str = ""
+    idle_duration: str = ""
+
+
 @router.post("/api/log/idle-redirect")
-async def log_idle_redirect(req: dict):
+async def log_idle_redirect(req: IdleRedirectLog):
     """记录空闲超时跳转日志"""
     from datetime import datetime
     log_entry = {
         "event": "idle_redirect",
-        "timestamp": req.get("timestamp", datetime.now().isoformat()),
-        "from_url": req.get("from_url", ""),
-        "idle_duration": req.get("idle_duration", ""),
+        "timestamp": req.timestamp or datetime.now().isoformat(),
+        "from_url": req.from_url,
+        "idle_duration": req.idle_duration,
     }
     print(f"[行为日志] 空闲跳转: {log_entry}")
     return {"status": "ok"}

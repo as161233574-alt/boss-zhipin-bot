@@ -11,7 +11,8 @@ import urllib.request
 import sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from boss_state import get_setting, init_db
+from boss_app.models.settings import get_setting
+from boss_app.core.database import init_db
 
 init_db()
 API_KEY = get_setting("ai_api_key") or ""

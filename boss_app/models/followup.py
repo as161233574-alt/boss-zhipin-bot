@@ -3,9 +3,8 @@
 管理投递后的跟进提醒：记录跟进动作、计算下次跟进时间、查询超期列表。
 """
 
-import sqlite3
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
 
 from ..core.database import get_db
 
@@ -48,31 +47,24 @@ def get_overdue_followups() -> List[dict]:
 
 
 def get_followup_stats() -> dict:
-    """返回跟进统计信息。"""
-    db = get_db()
-    overdue = db.execute(
-        """SELECT COUNT(*) as cnt FROM applications
-           WHERE deleted_at IS NULL AND follow_up_at IS NOT NULL
-             AND follow_up_at < datetime('now','localtime')
-             AND status IN ('applied', 'replied', 'interview')"""
-    ).fetchone()["cnt"]
-    upcoming = db.execute(
-        """SELECT COUNT(*) as cnt FROM applications
-           WHERE deleted_at IS NULL AND follow_up_at IS NOT NULL
-             AND follow_up_at >= datetime('now','localtime')
-             AND follow_up_at < datetime('now','localtime','+3 days')
-             AND status IN ('applied', 'replied', 'interview')"""
-    ).fetchone()["cnt"]
-    total_followups = db.execute(
-        """SELECT COALESCE(SUM(follow_up_count), 0) as cnt FROM applications
-           WHERE deleted_at IS NULL AND follow_up_count > 0"""
-    ).fetchone()["cnt"]
-    return {"overdue": overdue, "upcoming_3days": upcoming, "total_followups": total_followups}
+    """返回跟进统计信息（单条查询）。"""
+    row = get_db().execute(
+        """SELECT
+             SUM(CASE WHEN follow_up_at IS NOT NULL AND follow_up_at < datetime('now','localtime')
+                      AND status IN ('applied','replied','interview') THEN 1 ELSE 0 END) as overdue,
+             SUM(CASE WHEN follow_up_at IS NOT NULL AND follow_up_at >= datetime('now','localtime')
+                      AND follow_up_at < datetime('now','localtime','+3 days')
+                      AND status IN ('applied','replied','interview') THEN 1 ELSE 0 END) as upcoming,
+             COALESCE(SUM(CASE WHEN follow_up_count > 0 THEN follow_up_count ELSE 0 END), 0) as total
+           FROM applications WHERE deleted_at IS NULL"""
+    ).fetchone()
+    return {"overdue": row["overdue"] or 0, "upcoming_3days": row["upcoming"] or 0, "total_followups": row["total"] or 0}
 
 
 def record_followup(app_id: int, method: str = "manual") -> bool:
-    """记录一次跟进动作，更新 follow_up_count 和下次跟进时间。"""
+    """记录一次跟进动作，更新 follow_up_count 和下次跟进时间（原子操作）。"""
     db = get_db()
+    # 先读取当前状态用于计算下次跟进时间
     row = db.execute(
         "SELECT id, status, follow_up_count FROM applications WHERE id=? AND deleted_at IS NULL",
         (app_id,),
@@ -83,18 +75,22 @@ def record_followup(app_id: int, method: str = "manual") -> bool:
     count = (row["follow_up_count"] or 0) + 1
     next_time = compute_next_followup(row["status"] or "applied", count)
 
+    # 原子递增，避免并发丢失更新
     db.execute(
-        """UPDATE applications SET follow_up_count=?, follow_up_at=?,
-           updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-        (count, next_time, app_id),
+        """UPDATE applications SET follow_up_count=follow_up_count+1, follow_up_at=?,
+           updated_at=CURRENT_TIMESTAMP WHERE id=? AND deleted_at IS NULL""",
+        (next_time, app_id),
     )
     db.commit()
     return True
 
 
 def set_initial_followup(app_id: int, status: str = "applied"):
-    """投递成功时自动设置首次跟进时间。"""
+    """投递成功时自动设置首次跟进时间（幂等：已设置则跳过）。"""
     db = get_db()
+    existing = db.execute("SELECT follow_up_at FROM applications WHERE id=?", (app_id,)).fetchone()
+    if existing and existing["follow_up_at"]:
+        return  # 已有跟进时间，不覆盖
     next_time = compute_next_followup(status, 0)
     db.execute(
         "UPDATE applications SET follow_up_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",

@@ -36,6 +36,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-s"
 
 [tool.hatch.build.targets.wheel]
 packages = ["lakejob_cli"]

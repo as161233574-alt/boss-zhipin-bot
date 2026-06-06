@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
-from ..models.settings import get_setting, set_setting
+from ..models.settings import get_setting
 
 
 class AutoScheduler:
@@ -18,6 +18,7 @@ class AutoScheduler:
         self.last_run: Optional[str] = None
         self.last_result: Optional[dict] = None
         self.next_run: Optional[str] = None
+        self._last_exec_key: str = ""
 
     def start(self, automation, ws_manager) -> None:
         """启动定时任务后台循环。"""
@@ -50,10 +51,14 @@ class AutoScheduler:
         return times
 
     def _should_run_now(self, cron_times: list) -> bool:
-        """检查当前时间是否匹配任何配置的时间点（1分钟窗口）。"""
+        """检查当前时间是否匹配任何配置的时间点（1分钟窗口），且本分钟未执行过。"""
         now = datetime.now()
+        now_key = f"{now.hour}:{now.minute}"
+        if now_key == self._last_exec_key:
+            return False
         for h, m in cron_times:
             if now.hour == h and now.minute == m:
+                self._last_exec_key = now_key
                 return True
         return False
 
@@ -115,7 +120,10 @@ class AutoScheduler:
 
         try:
             # 检查投递上限
-            daily_limit = int(get_setting("daily_apply_limit", "15"))
+            try:
+                daily_limit = int(get_setting("daily_apply_limit", "15"))
+            except (ValueError, TypeError):
+                daily_limit = 15
             current_count = get_today_application_count()
             if current_count >= daily_limit:
                 result["errors"].append("已达到今日投递上限")
@@ -127,7 +135,6 @@ class AutoScheduler:
             city = get_setting("default_city", "全国")
             city_code = CITY_MAP.get(city, "100010000")
 
-            from ..core import state
             if not automation or automation.page is None:
                 result["errors"].append("浏览器未启动")
                 return result
@@ -165,6 +172,9 @@ class AutoScheduler:
             })
 
         except Exception as e:
+            import traceback
+            print(f"[定时调度] 执行异常: {e}")
+            traceback.print_exc()
             result["errors"].append(f"调度执行异常: {str(e)[:200]}")
 
         return result
