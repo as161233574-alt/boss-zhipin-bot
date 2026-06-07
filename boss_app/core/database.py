@@ -4,25 +4,38 @@
 """
 
 import sqlite3
+import asyncio
+import contextvars
 import threading
 from pathlib import Path
 from typing import List, Optional
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / ".boss_profile" / "boss_state.db"
 
+_ctx_conn: contextvars.ContextVar[Optional[sqlite3.Connection]] = contextvars.ContextVar("_ctx_conn", default=None)
 _local = threading.local()
 
 
 def get_db() -> sqlite3.Connection:
-    """获取线程本地数据库连接。"""
-    if not hasattr(_local, "conn") or _local.conn is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _local.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-        _local.conn.row_factory = sqlite3.Row
-        _local.conn.execute("PRAGMA journal_mode=WAL")
-        _local.conn.execute("PRAGMA busy_timeout=5000")
-        _local.conn.execute("PRAGMA foreign_keys=ON")
-    return _local.conn
+    """获取数据库连接。async 任务使用 contextvars 隔离，同步代码使用 thread-local。"""
+    conn = _ctx_conn.get()
+    if conn is not None:
+        return conn
+    # ThreadPoolExecutor 中的同步代码（评分等）走 thread-local
+    if hasattr(_local, "conn") and _local.conn is not None:
+        return _local.conn
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    # 异步上下文用 contextvars，同步上下文用 thread-local
+    try:
+        _ctx_conn.set(conn)
+    except LookupError:
+        _local.conn = conn
+    return conn
 
 
 def init_db():

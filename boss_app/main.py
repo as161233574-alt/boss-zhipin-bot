@@ -96,7 +96,6 @@ init_db()
 
 @app.on_event("startup")
 async def on_startup():
-    state.browser_sync_lock = asyncio.Lock()
     # 数据一致性修复：applied 但 greeting_sent_at 为空的记录
     try:
         fixed = reconcile_application_stats()
@@ -201,7 +200,8 @@ def index():
         from fastapi.responses import Response
         content = index_path.read_text(encoding="utf-8")
         # 将 Token 直接注入 HTML，避免暴露 /api/auth/token 端点
-        inject = f"<script>window.__API_TOKEN__='{API_TOKEN}';</script>"
+        import json as _json
+        inject = f"<script>window.__API_TOKEN__={_json.dumps(API_TOKEN)};</script>"
         content = content.replace("</head>", inject + "</head>", 1)
         return Response(
             content=content,

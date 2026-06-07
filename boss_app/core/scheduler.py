@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ..models.settings import get_setting
+from . import state
 
 
 class AutoScheduler:
@@ -141,7 +142,8 @@ class AutoScheduler:
 
             all_jobs = []
             for kw in [k.strip() for k in keywords.split(",") if k.strip()]:
-                jobs = await automation.search(kw, city_code, max_pages=1)
+                async with state.browser_sync_lock:
+                    jobs = await automation.search(kw, city_code, max_pages=1)
                 all_jobs.extend(jobs)
             jobs = all_jobs
             result["searched"] = len(jobs)
@@ -153,7 +155,7 @@ class AutoScheduler:
             # 保存新岗位
             new_ids = []
             for j in jobs:
-                aid, is_new = _save_job_with_dedup(j)
+                aid, is_new, _ = _save_job_with_dedup(j)
                 if is_new and aid:
                     new_ids.append(aid)
 

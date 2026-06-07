@@ -12,7 +12,7 @@ monitor_task: Optional[asyncio.Task] = None
 monitor_paused: bool = False
 
 # 浏览器同步锁（防止并发操作页面）
-browser_sync_lock: Optional[asyncio.Lock] = None
+browser_sync_lock: asyncio.Lock = asyncio.Lock()
 
 # 后台任务引用（防止被 GC 回收，以及异常丢失）
 background_tasks: List[asyncio.Task] = []

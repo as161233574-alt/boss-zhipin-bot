@@ -67,6 +67,13 @@ from boss_app.models.shortlist import (
 router = APIRouter()
 
 
+def _safe_remove_task(task: asyncio.Task) -> None:
+    try:
+        state.background_tasks.remove(task)
+    except ValueError:
+        pass
+
+
 # ══════════════════════════════════════
 #  搜索意向匹配（自动投递前置过滤）
 # ══════════════════════════════════════
@@ -985,7 +992,7 @@ async def batch_score_jobs(mode: str = "unscored"):
 
     task = asyncio.create_task(_batch_bg())
     state.background_tasks.append(task)
-    task.add_done_callback(lambda t: state.background_tasks.remove(t) if t in state.background_tasks else None)
+    task.add_done_callback(_safe_remove_task)
     label = "重新评分" if mode == "all" else "批量评分"
     return {"message": f"开始{label} {len(ids)} 个岗位", "count": len(ids)}
 
@@ -1074,7 +1081,8 @@ async def apply_to_job(req: ApplyRequest):
         company = job["company"] if job else "贵公司"
         greeting = generate_greeting(title, company)
 
-    result = await state.automation.apply_to_job(req.job_url, greeting, job_data)
+    async with state.browser_sync_lock:
+        result = await state.automation.apply_to_job(req.job_url, greeting, job_data)
     if result.get("success"):
         await ws_manager.broadcast(
             {
@@ -1156,7 +1164,7 @@ async def scan_current_page():
 
         task = asyncio.create_task(_pipeline_bg())
         state.background_tasks.append(task)
-        task.add_done_callback(lambda t: state.background_tasks.remove(t) if t in state.background_tasks else None)
+        task.add_done_callback(_safe_remove_task)
 
     await ws_manager.broadcast(
         {

@@ -48,7 +48,7 @@ class ChatAgent(BaseAgent):
     async def _run_chat_cycle(self) -> None:
         automation = state.automation
         lock = state.browser_sync_lock
-        if lock.locked():
+        if lock is None or lock.locked():
             return
         async with lock:
             result = await automation.run_chat_monitor_cycle()
