@@ -11,7 +11,7 @@ from helpers import screenshot, api_get, api_post, api_put, get_api_token
 
 def auth_get(path):
     req = urllib.request.Request(
-        f"http://127.0.0.1:8010{path}",
+        f"http://127.0.0.1:8000{path}",
         headers={"Authorization": f"Bearer {get_api_token()}"}
     )
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -21,7 +21,7 @@ def auth_get(path):
 def auth_post(path, data=None, timeout=60):
     body = json.dumps(data or {}).encode("utf-8")
     req = urllib.request.Request(
-        f"http://127.0.0.1:8010{path}",
+        f"http://127.0.0.1:8000{path}",
         data=body,
         headers={
             "Authorization": f"Bearer {get_api_token()}",
@@ -216,7 +216,7 @@ class TestSettings:
         import urllib.request
         body = json.dumps({"daily_apply_limit": "20"}).encode("utf-8")
         req = urllib.request.Request(
-            "http://127.0.0.1:8010/api/settings",
+            "http://127.0.0.1:8000/api/settings",
             data=body,
             headers={
                 "Authorization": f"Bearer {get_api_token()}",
