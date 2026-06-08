@@ -18,7 +18,7 @@ app = FastAPI(title="面试问答Agent", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:8002", "http://localhost:8002"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1270,7 +1270,7 @@ let appCurrentStatus='';
 function handleWS(msg){
   switch(msg.type){
     case'connected':updateStatusUI(msg.status);break;
-    case'search_complete':{let ws_msg='找到 '+msg.found+' 条，新增 '+(msg.new||0)+' 条';if(msg.existing>0) ws_msg+='，已有 '+msg.existing+' 条';if(msg.page_dup>0) ws_msg+='（页面去重 '+msg.page_dup+' 条）';if(msg.filtered>0) ws_msg+='，<span style="color:var(--orange);">过滤 '+msg.filtered+' 条</span>';document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">'+ws_msg+'</div>';if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();break;}
+    case'search_complete':{let ws_msg='找到 '+msg.found+' 条，新增 '+(msg.new||0)+' 条';if(msg.existing>0) ws_msg+='，已有 '+msg.existing+' 条';if(msg.page_dup>0) ws_msg+='（页面去重 '+msg.page_dup+' 条）';if(msg.filtered>0) ws_msg+='，<span style="color:var(--orange);">过滤 '+msg.filtered+' 条</span>';document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">'+esc(ws_msg)+'</div>';if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();break;}
     case'apply_complete':
       if(msg.skipped){showToast('跳过: '+msg.reason,'warning');}
       else if(currentSearchJobs.length&&msg.job_url){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===msg.job_url?{...j,status:'applied',id:msg.job_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
@@ -1697,7 +1697,7 @@ function showToast(message, type='info') {
   const toast = document.createElement('div');
   toast.className = 'toast toast-' + type;
   const iconMap = { success: 'check-circle', error: 'x-circle', warning: 'alert-triangle', info: 'info' };
-  toast.innerHTML = '<i data-lucide="' + (iconMap[type] || 'info') + '" style="width:16px;height:16px;flex-shrink:0;"></i><span>' + message + '</span>';
+  toast.innerHTML = '<i data-lucide="' + (iconMap[type] || 'info') + '" style="width:16px;height:16px;flex-shrink:0;"></i><span>' + esc(message) + '</span>';
   document.body.appendChild(toast);
   if (typeof refreshIcons === 'function') refreshIcons();
   let duration = type === 'error' ? 6000 : type === 'warning' ? 5000 : 3000;
@@ -2534,7 +2534,7 @@ async function resumeAction(action) {
     });
     _resumeRunning = false;
     if (!r) { resultArea.innerHTML = '<div style="color:var(--red);">请求失败</div>'; return; }
-    if (r.error) { resultArea.innerHTML = '<div style="color:var(--red);">错误: ' + r.error + '</div>'; return; }
+    if (r.error) { resultArea.innerHTML = '<div style="color:var(--red);">错误: ' + esc(r.error) + '</div>'; return; }
     renderResumeResult(action, r);
     loadResumeStats();
     loadResumeHistory();

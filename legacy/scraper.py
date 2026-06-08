@@ -245,13 +245,10 @@ def _fetch_jd_detail(url):
     if not url:
         return ""
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         })
-        resp = urllib.request.urlopen(req, timeout=10, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=10)
         html = resp.read().decode("utf-8", errors="replace")
         
         soup = BeautifulSoup(html, "html.parser")

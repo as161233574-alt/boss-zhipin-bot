@@ -285,6 +285,8 @@ let currentQuestion = null;
 let currentReferenceAnswer = "";
 let isGrading = false;
 
+function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'):'';}
+
 // Tab switching
 function switchTab(tab) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -336,7 +338,7 @@ async function learnAsk() {
     // 置信度标签 + AI生成提示
     if (data.note) {
       // 在答案上方显示提示
-      document.getElementById('learn-a').innerHTML = '<div style="background:var(--border);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:var(--orange);">⚠️ ' + data.note + '</div>' + data.answer;
+      document.getElementById('learn-a').innerHTML = '<div style="background:var(--border);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:var(--orange);">⚠️ ' + esc(data.note) + '</div>' + esc(data.answer);
     }
     let confHtml = '';
     if (data.confidence === 'low') {
@@ -427,7 +429,7 @@ async function startInterview() {
 
     if (data.job_context) {
       const ctx = document.getElementById('job-context');
-      ctx.innerHTML = '📌 匹配到的岗位：<br>' + data.job_context.replace(/\n/g, '<br>');
+      ctx.innerHTML = '📌 匹配到的岗位：<br>' + esc(data.job_context).replace(/\n/g, '<br>');
       ctx.style.display = 'block';
     }
 
