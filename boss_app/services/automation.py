@@ -13,6 +13,16 @@ from typing import Optional, List
 from playwright.async_api import Locator
 
 from .scraper import BossScraper, async_pause, decode_salary, STATE_FILE
+from ..core.database import get_active_resume
+from ..models.settings import get_setting as _get_setting
+
+
+def _get_resume_summary() -> str:
+    """获取当前激活简历的摘要，如果没有则回退到旧的 settings。"""
+    active = get_active_resume()
+    if active and active.get("summary"):
+        return active["summary"]
+    return _get_setting("resume_summary", "")
 
 
 def _keywords_match(job_title: str, job_desc: str, search_keywords: str) -> bool:
@@ -594,7 +604,7 @@ class BossAutomation(BossScraper):
             if not greeting:
                 # 使用智能打招呼生成
                 from .replier import generate_smart_greeting
-                resume_summary = get_setting("resume_summary", "")
+                resume_summary = _get_resume_summary()
                 greeting_text = generate_smart_greeting(
                     job_title=job_data.get("title", "") if job_data else "",
                     company=job_data.get("company", "") if job_data else "",
@@ -1748,7 +1758,7 @@ class BossAutomation(BossScraper):
                         "description": job_desc,
                     }
                     style = get_setting("ai_reply_style", "professional")
-                    resume = get_setting("resume_summary", "")
+                    resume = _get_resume_summary()
                     wechat = get_setting("wechat_id", "")
 
                     reply, interest, emotion, dialogue_stage = generate_reply(conv_id, unreplied_hr_msg, job_info, style, resume, wechat)

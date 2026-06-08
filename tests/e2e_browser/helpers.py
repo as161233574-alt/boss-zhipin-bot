@@ -8,7 +8,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "http://127.0.0.1:8010"
 API_TOKEN_PATH = Path(__file__).parent.parent.parent / ".boss_profile" / ".api_token"
 SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
 SCREENSHOT_DIR.mkdir(exist_ok=True)

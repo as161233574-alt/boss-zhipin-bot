@@ -194,6 +194,21 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    # 简历管理表（多简历支持）
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS resumes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            filename TEXT,
+            summary TEXT NOT NULL,
+            full_text TEXT,
+            text_length INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_resumes_active ON resumes(is_active) WHERE is_active = 1")
     # 简历优化历史
     db.executescript("""
         CREATE TABLE IF NOT EXISTS resume_history (
@@ -231,6 +246,8 @@ def init_db():
     for k, v in defaults.items():
         db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
     db.commit()
+    # 迁移旧简历数据
+    migrate_old_resume()
 
 
 def _row_to_dict(row) -> Optional[dict]:
@@ -279,3 +296,99 @@ def get_all_agent_profiles() -> dict:
     db = get_db()
     rows = db.execute("SELECT name, profile_json FROM agent_profiles").fetchall()
     return {r["name"]: json.loads(r["profile_json"]) for r in rows}
+
+
+# ── 简历 CRUD ──
+
+def list_resumes() -> List[dict]:
+    """获取所有简历列表。"""
+    db = get_db()
+    rows = db.execute("SELECT id, name, filename, summary, text_length, is_active, created_at, updated_at FROM resumes ORDER BY is_active DESC, updated_at DESC").fetchall()
+    return _rows_to_list(rows)
+
+
+def get_resume(resume_id: int) -> Optional[dict]:
+    """获取单份简历。"""
+    db = get_db()
+    row = db.execute("SELECT * FROM resumes WHERE id=?", (resume_id,)).fetchone()
+    return _row_to_dict(row)
+
+
+def get_active_resume() -> Optional[dict]:
+    """获取当前激活的简历。"""
+    db = get_db()
+    row = db.execute("SELECT * FROM resumes WHERE is_active=1").fetchone()
+    return _row_to_dict(row)
+
+
+def create_resume(name: str, summary: str, full_text: str = "", filename: str = "") -> int:
+    """创建新简历。如果没有其他激活简历，则自动激活。"""
+    db = get_db()
+    has_active = db.execute("SELECT COUNT(*) FROM resumes WHERE is_active=1").fetchone()[0]
+    is_active = 1 if has_active == 0 else 0
+    cur = db.execute(
+        "INSERT INTO resumes (name, filename, summary, full_text, text_length, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, filename, summary, full_text, len(full_text), is_active),
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+def update_resume(resume_id: int, **kwargs) -> None:
+    """更新简历字段。"""
+    db = get_db()
+    sets = []
+    vals = []
+    for k, v in kwargs.items():
+        if k in ("name", "filename", "summary", "full_text", "text_length"):
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return
+    sets.append("updated_at=CURRENT_TIMESTAMP")
+    vals.append(resume_id)
+    db.execute(f"UPDATE resumes SET {', '.join(sets)} WHERE id=?", vals)
+    db.commit()
+
+
+def set_active_resume(resume_id: int) -> None:
+    """设置激活简历（同时取消其他简历的激活状态）。"""
+    db = get_db()
+    db.execute("UPDATE resumes SET is_active=0")
+    db.execute("UPDATE resumes SET is_active=1, updated_at=CURRENT_TIMESTAMP WHERE id=?", (resume_id,))
+    db.commit()
+
+
+def delete_resume(resume_id: int) -> bool:
+    """删除简历。如果是激活简历，则自动激活最新的其他简历。"""
+    db = get_db()
+    was_active = db.execute("SELECT is_active FROM resumes WHERE id=?", (resume_id,)).fetchone()
+    db.execute("DELETE FROM resumes WHERE id=?", (resume_id,))
+    if was_active and was_active[0]:
+        next_resume = db.execute("SELECT id FROM resumes ORDER BY updated_at DESC LIMIT 1").fetchone()
+        if next_resume:
+            db.execute("UPDATE resumes SET is_active=1 WHERE id=?", (next_resume[0],))
+    db.commit()
+    return True
+
+
+def migrate_old_resume() -> None:
+    """将旧的单简历数据迁移到新的多简历表。"""
+    db = get_db()
+    old_summary = db.execute("SELECT value FROM settings WHERE key='resume_summary'").fetchone()
+    old_filename = db.execute("SELECT value FROM settings WHERE key='resume_filename'").fetchone()
+    old_full_text = db.execute("SELECT value FROM settings WHERE key='resume_full_text'").fetchone()
+
+    if old_summary and old_summary[0]:
+        # 检查是否已迁移
+        existing = db.execute("SELECT COUNT(*) FROM resumes").fetchone()[0]
+        if existing == 0:
+            name = old_filename[0] if old_filename else "默认简历"
+            summary = old_summary[0]
+            full_text = old_full_text[0] if old_full_text else ""
+            filename = old_filename[0] if old_filename else ""
+            db.execute(
+                "INSERT INTO resumes (name, filename, summary, full_text, text_length, is_active) VALUES (?, ?, ?, ?, ?, 1)",
+                (name, filename, summary, full_text, len(full_text)),
+            )
+            db.commit()

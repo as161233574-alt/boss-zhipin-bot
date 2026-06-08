@@ -52,7 +52,16 @@ from ..models.application import (
 )
 from ..models.settings import get_setting
 from ..core import state
+from ..core.database import get_active_resume
 from ..services.scorer import check_legitimacy, score_hr_activity, compute_composite_score, score_job_combined
+
+
+def _get_resume_summary() -> str:
+    """获取当前激活简历的摘要，如果没有则回退到旧的 settings。"""
+    active = get_active_resume()
+    if active and active.get("summary"):
+        return active["summary"]
+    return get_setting("resume_summary", "")
 from ..services.scraper import BossScraper
 from ..services.automation import check_job_match
 from ..config import CITY_MAP
@@ -220,7 +229,7 @@ def _detail_score_and_autoapply(new_ids: list, all_jobs_for_legitimacy: list, jo
     """三阶段流水线：合法性检测 → 合并评分(并行) → 自动投递。返回评分成功数量。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    resume = get_setting("resume_summary", "")
+    resume = _get_resume_summary()
     scored = 0
 
     # Phase 1: 合法性检测（纯规则，快，串行即可）
@@ -571,7 +580,7 @@ async def _background_score_and_apply(new_ids, keyword, city, found, db_existing
     filtered_count = 0
     try:
         filter_inactive = get_setting("filter_inactive_hr", "true") == "true"
-        resume = get_setting("resume_summary", "")
+        resume = _get_resume_summary()
         all_jobs = get_all_active_jobs_for_legitimacy()
 
         # Phase 1: 串行抓取详情（需要浏览器锁）
@@ -896,7 +905,7 @@ async def score_single_job(job_id: int):
     job = get_application_for_scoring(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="岗位不存在")
-    resume = get_setting("resume_summary", "")
+    resume = _get_resume_summary()
     title = job.get("job_title", "")
     company = job.get("company", "")
     desc = job.get("description", "")
@@ -966,7 +975,7 @@ async def batch_score_jobs(mode: str = "unscored"):
         if not rows:
             return {"message": "没有待评分的岗位", "count": 0}
     ids = [r["id"] for r in rows]
-    resume = get_setting("resume_summary", "")
+    resume = _get_resume_summary()
     all_jobs = get_all_active_jobs_for_legitimacy()
 
     BATCH_SIZE = 5
@@ -1264,7 +1273,7 @@ async def scan_and_apply(req: ScanAndApplyRequest = ScanAndApplyRequest()):
 @router.post("/api/jobs/analyze")
 async def analyze_jd(req: AnalyzeRequest):
     """AI分析岗位JD，返回匹配度、关键技能、差距、建议。"""
-    resume = get_setting("resume_summary", "")
+    resume = _get_resume_summary()
     desc = req.description or ""
     title = req.job_title or ""
     company = req.company or ""

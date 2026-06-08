@@ -4,9 +4,18 @@ import asyncio
 import time
 from .base import BaseAgent, AgentMessage
 from ..core import state
+from ..core.database import get_active_resume
 from ..models.settings import get_setting
 from ..models.conversation import update_conversation_interest
 from ..models.message import add_message
+
+
+def _get_resume_summary() -> str:
+    """获取当前激活简历的摘要，如果没有则回退到旧的 settings。"""
+    active = get_active_resume()
+    if active and active.get("summary"):
+        return active["summary"]
+    return get_setting("resume_summary", "")
 
 
 class ChatAgent(BaseAgent):
@@ -71,7 +80,7 @@ class ChatAgent(BaseAgent):
         reply, interest, emotion, stage = await loop.run_in_executor(
             None, lambda: generate_reply(
                 conversation_id, hr_message, job_info,
-                resume_summary=get_setting("resume_summary", ""),
+                resume_summary=_get_resume_summary(),
                 wechat_id=wechat_id, cfg=agent_cfg,
             )
         )

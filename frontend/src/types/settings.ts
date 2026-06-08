@@ -20,8 +20,8 @@ export interface Settings {
   scheduler_interval_minutes: number
   scheduler_active_hours_start: string
   scheduler_active_hours_end: string
-  resume_text: string
-  resume_file_name: string
+  resume_summary: string
+  resume_filename: string
   company_blacklist: string[]
   hr_blacklist: string[]
   selectors: Record<string, string>

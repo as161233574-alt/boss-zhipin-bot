@@ -7,8 +7,17 @@ from .base import BaseAgent, AgentMessage
 from ..services.scorer import score_job_combined, check_legitimacy, score_hr_activity, compute_composite_score
 from ..models.application import get_application_for_scoring, update_application_score
 from ..models.settings import get_setting
+from ..core.database import get_active_resume
 
 _score_pool = ThreadPoolExecutor(max_workers=3)
+
+
+def _get_resume_summary() -> str:
+    """获取当前激活简历的摘要，如果没有则回退到旧的 settings。"""
+    active = get_active_resume()
+    if active and active.get("summary"):
+        return active["summary"]
+    return get_setting("resume_summary", "")
 
 
 class ScorerAgent(BaseAgent):
@@ -29,7 +38,7 @@ class ScorerAgent(BaseAgent):
             }, correlation_id=msg.correlation_id)
             return
 
-        resume = get_setting("resume_summary", "")
+        resume = _get_resume_summary()
         loop = asyncio.get_event_loop()
         agent_cfg = self.get_llm_config()
 
@@ -75,7 +84,7 @@ class ScorerAgent(BaseAgent):
 
     async def _handle_score_one(self, msg: AgentMessage) -> None:
         aid = msg.payload.get("job_id")
-        resume = get_setting("resume_summary", "")
+        resume = _get_resume_summary()
         job = get_application_for_scoring(aid)
         if not job:
             return

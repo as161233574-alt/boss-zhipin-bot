@@ -28,9 +28,26 @@ from ..models.settings import (
     get_funnel_stats,
     DEFAULT_SETTINGS,
 )
+from ..core.database import (
+    list_resumes,
+    get_resume,
+    get_active_resume,
+    create_resume,
+    update_resume,
+    set_active_resume,
+    delete_resume as db_delete_resume,
+)
 from ..services.resume_parser import parse_resume_file
 
 router = APIRouter()
+
+
+def _get_active_resume_summary() -> str:
+    """获取当前激活简历的摘要，如果没有则回退到旧的 settings。"""
+    active = get_active_resume()
+    if active and active.get("summary"):
+        return active["summary"]
+    return get_setting("resume_summary", "")
 
 
 # ══════════════════════════════════════
@@ -138,7 +155,7 @@ def generate_smart_greeting(req: SmartGreetingRequest):
     """生成智能打招呼内容。"""
     from ..services.replier import generate_smart_greeting
 
-    resume_summary = get_setting("resume_summary", "")
+    resume_summary = _get_active_resume_summary()
     greeting = generate_smart_greeting(
         job_title=req.job_title,
         company=req.company,
@@ -255,11 +272,118 @@ async def upload_resume(file: UploadFile = File(...)):
 
 @router.delete("/api/settings/resume")
 def delete_resume():
-    """清除已上传的简历。"""
+    """清除已上传的简历（兼容旧接口）。"""
     set_settings_bulk({
         "resume_summary": "",
         "resume_full_text": "",
         "resume_filename": "",
         "resume_text_length": "0",
     })
+    return {"status": "ok"}
+
+
+# ══════════════════════════════════════
+#  多简历管理 API
+# ══════════════════════════════════════
+
+
+@router.get("/api/resumes")
+def api_list_resumes():
+    """获取所有简历列表。"""
+    return {"resumes": list_resumes()}
+
+
+@router.get("/api/resumes/active")
+def api_get_active_resume():
+    """获取当前激活的简历。"""
+    resume = get_active_resume()
+    return {"resume": resume}
+
+
+@router.post("/api/resumes")
+async def api_create_resume(file: UploadFile = File(...)):
+    """上传并创建新简历。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in ALLOWED_RESUME_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型 {suffix}, 仅支持 {', '.join(ALLOWED_RESUME_EXT)}",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_RESUME_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大 ({len(content)//1024}KB), 上限 {MAX_RESUME_SIZE//1024//1024}MB",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    try:
+        result = parse_resume_file(content, file.filename)
+    except Exception as e:
+        print(f"[简历] 解析失败: {e}")
+        raise HTTPException(status_code=422, detail="简历解析失败，请检查文件格式后重试")
+
+    if not result["summary"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"未能从简历中提取关键信息 (文本长度 {result['text_length']})",
+        )
+
+    # 使用文件名（去掉扩展名）作为简历名称
+    name = Path(file.filename).stem
+    resume_id = create_resume(
+        name=name,
+        summary=result["summary"],
+        full_text=result["full_text"],
+        filename=file.filename,
+    )
+
+    return {
+        "status": "ok",
+        "id": resume_id,
+        "name": name,
+        "filename": file.filename,
+        "text_length": result["text_length"],
+        "summary_length": len(result["summary"]),
+    }
+
+
+@router.put("/api/resumes/{resume_id}/activate")
+def api_activate_resume(resume_id: int):
+    """设置指定简历为激活状态。"""
+    resume = get_resume(resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="简历不存在")
+    set_active_resume(resume_id)
+    return {"status": "ok", "id": resume_id}
+
+
+@router.put("/api/resumes/{resume_id}")
+def api_update_resume(resume_id: int, name: Optional[str] = None, summary: Optional[str] = None):
+    """更新简历名称或摘要。"""
+    resume = get_resume(resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="简历不存在")
+    updates = {}
+    if name is not None:
+        updates["name"] = name
+    if summary is not None:
+        updates["summary"] = summary
+    if updates:
+        update_resume(resume_id, **updates)
+    return {"status": "ok"}
+
+
+@router.delete("/api/resumes/{resume_id}")
+def api_delete_resume(resume_id: int):
+    """删除指定简历。"""
+    resume = get_resume(resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="简历不存在")
+    db_delete_resume(resume_id)
     return {"status": "ok"}
