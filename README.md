@@ -243,6 +243,12 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/e2e_browser/ -v
 - 修复漏斗统计偏差：调用 `POST /api/stats/reconcile`
 - 重置所有设置：删除 `.boss_profile/boss_state.db` 重启服务
 
+## 免责声明
+
+⚠️ **免责声明**
+
+本项目仅用于学习交流和本地辅助，使用时请遵守相关法律法规、BOSS 直聘平台用户协议和隐私政策。默认低风险模式会阻断自动触达、批量操作、规避风控和候选人个人信息处理链路；任何投递、沟通、联系方式交换、招聘者候选人处理都应回到平台官网由用户手动完成。因不当使用产生的一切后果由使用者自行承担，与本项目作者无关。
+
 ## 许可
 
 MIT License
