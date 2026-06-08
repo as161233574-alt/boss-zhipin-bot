@@ -13,19 +13,35 @@ const { success } = useToast()
 const form = ref<Partial<SettingsType>>({})
 const saved = ref(false)
 
+const BOOL_KEYS = ['auto_reply_enabled', 'greeting_enabled', 'auto_apply_enabled', 'auto_apply_hr_active_required', 'filter_inactive_hr'] as const
+
+function normalizeBooleans(obj: Record<string, any>) {
+  const data = { ...obj }
+  for (const key of BOOL_KEYS) {
+    if (key in data) {
+      data[key] = data[key] === true || data[key] === 'true' || data[key] === '1'
+    }
+  }
+  return data
+}
+
 onMounted(async () => {
   await settingsStore.fetchSettings()
   if (settingsStore.settings) {
-    form.value = { ...settingsStore.settings }
+    form.value = normalizeBooleans(settingsStore.settings as Record<string, any>)
   }
 })
 
 watch(() => settingsStore.settings, (val) => {
-  if (val) form.value = { ...val }
+  if (val) form.value = normalizeBooleans(val as Record<string, any>)
 })
 
 async function save() {
-  await settingsStore.updateSettings(form.value)
+  const data = { ...form.value }
+  for (const key of BOOL_KEYS) {
+    if (key in data && typeof data[key] === 'boolean') data[key] = String(data[key])
+  }
+  await settingsStore.updateSettings(data)
   saved.value = true
   setTimeout(() => { saved.value = false }, 2000)
 }

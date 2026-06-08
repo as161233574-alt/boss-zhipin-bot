@@ -33,6 +33,7 @@ export interface Message {
   role: string
   content: string
   created_at: string
+  sent_at?: string
   is_ai_generated: boolean
 }
 

@@ -47,6 +47,12 @@ def _clean_messages_for_web(messages: List[dict]) -> List[dict]:
             if content.endswith(word):
                 content = content[: -len(word)].strip()
         item["content"] = content
+        # sender → role 映射：前端使用 role 字段
+        sender = item.get("sender", "hr")
+        if sender == "me":
+            item["role"] = "ai" if item.get("ai_generated") else "user"
+        else:
+            item["role"] = "hr"
         if content:
             cleaned.append(item)
     return cleaned
@@ -135,7 +141,16 @@ async def sync_conversation_messages(conv_id: int):
 
             live_messages = await asyncio.wait_for(state.automation.read_visible_messages(), timeout=5)
             if live_messages:
-                replace_conversation_messages(conv_id, live_messages)
+                # Python 端去重：sender + content 前 80 字符
+                seen_keys = set()
+                deduped = []
+                for msg in live_messages:
+                    key = (msg.get("sender", ""), (msg.get("content") or "")[:80])
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    deduped.append(msg)
+                replace_conversation_messages(conv_id, deduped)
                 last = live_messages[-1]
                 update_conversation_last_message(conv_id, last.get("content", ""), last.get("sender", "hr"))
     except asyncio.TimeoutError:
@@ -235,3 +250,53 @@ async def resume_auto_reply(conv_id: int):
         }
     )
     return {"status": "ok"}
+
+
+@router.get("/api/debug/dom-structure")
+async def debug_dom_structure():
+    """调试：返回 BOSS 聊天页面的 DOM 结构，用于定位消息元素选择器。"""
+    if not state.automation or state.automation.page is None:
+        return {"error": "浏览器未启动"}
+    try:
+        info = await state.automation.page.evaluate("""() => {
+            const vw = window.innerWidth;
+            const chatArea = document.querySelector('[class*="chat-content"], [class*="message-list"], [class*="chat-window"], .chat-conversation');
+            const items = document.querySelectorAll('li, [class*="message-item"], [class*="chat-item"], [class*="msg-item"]');
+            const sample = [];
+            let count = 0;
+            for (const el of items) {
+                if (count >= 10) break;
+                const r = el.getBoundingClientRect();
+                if (r.width < 50 || r.height < 10) continue;
+                if (r.left + r.width / 2 < vw * 0.3) continue;
+                const cls = el.className || '';
+                const parentCls = el.parentElement?.className || '';
+                const gpCls = el.parentElement?.parentElement?.className || '';
+                const text = (el.innerText || '').substring(0, 80);
+                const style = getComputedStyle(el);
+                const pStyle = el.parentElement ? getComputedStyle(el.parentElement) : {};
+                sample.push({
+                    tag: el.tagName,
+                    cls: cls.substring(0, 120),
+                    parentCls: parentCls.substring(0, 120),
+                    gpCls: gpCls.substring(0, 120),
+                    textAlign: style.textAlign,
+                    justifyContent: style.justifyContent,
+                    parentJustify: pStyle.justifyContent || '',
+                    left: Math.round(r.left),
+                    right: Math.round(r.right),
+                    center: Math.round(r.left + r.width / 2),
+                    vw: vw,
+                    text: text
+                });
+                count++;
+            }
+            return {
+                chatContainerCls: chatArea ? chatArea.className : 'NOT FOUND',
+                totalItems: items.length,
+                sample: sample
+            };
+        }""")
+        return info
+    except Exception as e:
+        return {"error": str(e)}

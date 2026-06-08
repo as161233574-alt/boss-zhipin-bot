@@ -15,7 +15,8 @@ export const useSettingsStore = defineStore('settings', () => {
   async function fetchSettings() {
     loading.value = true
     try {
-      settings.value = await api.get('/api/settings')
+      const data = await api.get('/api/settings')
+      settings.value = data.settings || data
     } catch (e: any) {
       error(`加载设置失败: ${e.message}`)
     } finally {
@@ -26,7 +27,9 @@ export const useSettingsStore = defineStore('settings', () => {
   async function updateSettings(data: Partial<Settings>) {
     saving.value = true
     try {
-      settings.value = await api.put('/api/settings', data)
+      await api.put('/api/settings', data)
+      // 重新获取完整设置
+      await fetchSettings()
       success('设置已保存')
     } catch (e: any) {
       error(`保存失败: ${e.message}`)

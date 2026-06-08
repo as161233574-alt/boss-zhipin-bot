@@ -9,14 +9,14 @@ import SearchStatus from '@/components/search/SearchStatus.vue'
 import { Search, Zap, Sparkles } from '@lucide/vue'
 
 const jobsStore = useJobsStore()
-const { applyJob, skipJob, scoreJob, batchScore } = useJobActions()
+const { applyJob, skipJob, scoreJob, batchScore, smartApply } = useJobActions()
 const listEl = ref<HTMLElement>()
 
 useScrollReveal(listEl, { delay: 150 })
 
 onMounted(() => jobsStore.fetchJobs())
 
-function handleSearch(params: { keyword: string; city: string; max_pages: number }) {
+function handleSearch(params: { keyword: string; city: string; max_pages: number; experience: string; salary_min: string; salary_max: string }) {
   jobsStore.searchJobs(params)
 }
 </script>
@@ -42,13 +42,22 @@ function handleSearch(params: { keyword: string; city: string; max_pages: number
               </div>
             </div>
           </div>
-          <button
-            @click="batchScore('unscored')"
-            class="group inline-flex items-center gap-2 rounded-xl gradient-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-all duration-200 hover:shadow-xl hover:shadow-primary/25 active:scale-[0.97] btn-glow shrink-0"
-          >
-            <Zap class="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
-            批量评分
-          </button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              @click="batchScore('unscored')"
+              class="group inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground transition-all duration-200 hover:bg-accent hover:shadow-md active:scale-[0.97]"
+            >
+              <Zap class="h-4 w-4 text-primary transition-transform duration-200 group-hover:scale-110" />
+              批量评分
+            </button>
+            <button
+              @click="smartApply()"
+              class="group inline-flex items-center gap-2 rounded-xl gradient-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-all duration-200 hover:shadow-xl hover:shadow-primary/25 active:scale-[0.97] btn-glow"
+            >
+              <Sparkles class="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
+              智能投递
+            </button>
+          </div>
         </div>
 
         <!-- Search bar embedded in hero -->

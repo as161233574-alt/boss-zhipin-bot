@@ -156,7 +156,7 @@ def _deduplicate_jobs(jobs: list) -> list:
     return result
 
 
-def _save_job_with_dedup(job: dict) -> tuple:
+def _save_job_with_dedup(job: dict, overrides: dict = None) -> tuple:
     """保存岗位（URL 优先查重）。返回 (app_id, is_new, app_dict)。
 
     保存前会检查岗位是否符合用户的经验要求和期望薪资条件。
@@ -165,7 +165,7 @@ def _save_job_with_dedup(job: dict) -> tuple:
     job["url"] = _normalize_job_url(job.get("url", ""))
 
     # 检查岗位是否符合经验要求和期望薪资条件
-    is_match, reason = check_job_match(job)
+    is_match, reason = check_job_match(job, overrides)
     if not is_match:
         print(f"  [跳过] {reason}: {job.get('title','')[:30]} | {job.get('salary','')} | {job.get('experience','')}")
         return 0, False, None
@@ -367,11 +367,20 @@ async def _fetch_details_and_score(new_ids: list, all_jobs_for_legitimacy: list)
     return scored, applied
 
 
+_auto_apply_running = False
+
+
 async def _execute_auto_apply():
     """执行自动投递：查询高分岗位 → 逐个投递。
 
     返回: 成功投递数量
     """
+    global _auto_apply_running
+    if _auto_apply_running:
+        print("[自动投递] 已有智能投递任务在运行，跳过")
+        return 0
+    _auto_apply_running = True
+
     threshold = int(get_setting("auto_apply_threshold", "80"))
     hr_active_required = get_setting("auto_apply_hr_active_required", "true") == "true"
     daily_limit = int(get_setting("daily_apply_limit", "15"))
@@ -379,12 +388,16 @@ async def _execute_auto_apply():
 
     today_count = get_today_application_count()
     if today_count >= daily_limit:
-        print(f"[自动投递] 今日已投递 {today_count} 份，达到上限 {daily_limit}")
+        msg = f"今日已投递 {today_count} 份，达到上限 {daily_limit}"
+        print(f"[自动投递] {msg}")
+        await ws_manager.broadcast({"type": "auto_apply_batch_complete", "total": 0, "applied": 0, "message": msg})
         return 0
 
     candidates = get_auto_apply_candidates(threshold, hr_active_required)
     if not candidates:
-        print(f"[自动投递] 无符合条件的岗位（阈值={threshold}, HR活跃要求={hr_active_required}）")
+        msg = f"无符合条件的岗位（综合分>={threshold}, HR活跃要求={hr_active_required}）。请先搜索岗位并等待评分完成。"
+        print(f"[自动投递] {msg}")
+        await ws_manager.broadcast({"type": "auto_apply_batch_complete", "total": 0, "applied": 0, "message": msg})
         return 0
 
     # 意向匹配过滤：排除与搜索关键词不匹配的岗位
@@ -396,66 +409,99 @@ async def _execute_auto_apply():
             print(f"[自动投递] 意向不匹配，跳过: {job.get('job_title', '')} @ {job.get('company', '')}")
     candidates = intent_matched
     if not candidates:
-        print(f"[自动投递] 意向匹配后无候选岗位")
+        msg = "意向匹配后无候选岗位，请检查搜索关键词设置"
+        print(f"[自动投递] {msg}")
+        await ws_manager.broadcast({"type": "auto_apply_batch_complete", "total": 0, "applied": 0, "message": msg})
         return 0
 
     remaining = daily_limit - today_count
     to_apply = candidates[:remaining]
     print(f"[自动投递] 找到 {len(candidates)} 个候选，本次投递 {len(to_apply)} 个")
 
-    applied = 0
-    for job in to_apply:
-        app_id = job["id"]
-        title = job.get("job_title", "")
-        company = job.get("company", "")
-        url = job.get("job_url", "")
+    # 暂停聊天监控，防止监控循环抢夺浏览器锁导致页面被导航走
+    chat_monitor.pause()
 
-        try:
-            greeting = get_setting("greeting_template", "").replace("{job_title}", title)
-            if not greeting:
-                greeting = f"您好！看到贵司在招{title}，很感兴趣，希望有机会详细了解一下。"
+    try:
+        applied = 0
+        for i, job in enumerate(to_apply):
+            app_id = job["id"]
+            title = job.get("job_title", "")
+            company = job.get("company", "")
+            url = job.get("job_url", "")
 
-            async with state.browser_sync_lock:
-                result = await state.automation.apply_to_job(url, greeting)
+            try:
+                greeting = get_setting("greeting_template", "").replace("{job_title}", title)
+                if not greeting:
+                    greeting = f"您好！看到贵司在招{title}，很感兴趣，希望有机会详细了解一下。"
 
-            if result.get("success"):
-                update_application_status(app_id, "applied", greeting)
-                log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), "success")
-                applied += 1
-                print(f"[自动投递] {title} @ {company} → 投递成功")
-
-                await ws_manager.broadcast({
-                    "type": "auto_apply_complete",
-                    "job_id": app_id,
+                # 构造 job_data 用于薪资/经验过滤
+                job_data = {
                     "title": title,
+                    "job_title": title,
                     "company": company,
-                    "success": True,
-                })
-            elif result.get("skipped"):
-                msg = result.get("message", "已跳过")
-                log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"skipped: {msg}")
-                print(f"[自动投递] {title} @ {company} → 跳过: {msg}")
-            else:
-                msg = result.get("message", "未知原因")
-                log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"failed: {msg}")
-                print(f"[自动投递] {title} @ {company} → 投递失败: {msg}")
+                    "salary": job.get("salary", ""),
+                    "experience": job.get("experience", ""),
+                    "education": job.get("education", ""),
+                    "description": (job.get("description") or "")[:500],
+                }
 
-            # 随机延迟 30-90 秒
-            delay = random.uniform(30, 90)
-            await asyncio.sleep(delay)
+                print(f"[自动投递] ({i+1}/{len(to_apply)}) 开始投递: {title} @ {company}")
 
-        except Exception as e:
-            log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"error: {e}")
-            print(f"[自动投递] {title} @ {company} → 异常: {e}")
+                async with state.browser_sync_lock:
+                    # 单个岗位投递超时 120 秒，防止卡死
+                    try:
+                        result = await asyncio.wait_for(
+                            state.automation.apply_to_job(url, greeting, job_data),
+                            timeout=120,
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"[自动投递] {title} @ {company} → 投递超时(120s)")
+                        log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), "timeout")
+                        continue
 
-    print(f"[自动投递] 批次完成: {applied}/{len(to_apply)} 投递成功")
-    await ws_manager.broadcast({
-        "type": "auto_apply_batch_complete",
-        "total": len(to_apply),
-        "applied": applied,
-    })
+                if result.get("success"):
+                    update_application_status(app_id, "applied", greeting)
+                    log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), "success")
+                    applied += 1
+                    print(f"[自动投递] {title} @ {company} → 投递成功")
 
-    return applied
+                    await ws_manager.broadcast({
+                        "type": "auto_apply_complete",
+                        "job_id": app_id,
+                        "title": title,
+                        "company": company,
+                        "success": True,
+                    })
+                elif result.get("skipped"):
+                    msg = result.get("message", "已跳过")
+                    log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"skipped: {msg}")
+                    print(f"[自动投递] {title} @ {company} → 跳过: {msg}")
+                else:
+                    msg = result.get("message", "未知原因")
+                    log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"failed: {msg}")
+                    print(f"[自动投递] {title} @ {company} → 投递失败: {msg}")
+
+                # 随机延迟 30-90 秒
+                if i < len(to_apply) - 1:
+                    delay = random.uniform(30, 90)
+                    print(f"[自动投递] 等待 {delay:.0f}s 后投递下一条...")
+                    await asyncio.sleep(delay)
+
+            except Exception as e:
+                log_auto_apply(app_id, job.get("composite_score", 0), job.get("hr_activity_score", 0), f"error: {e}")
+                print(f"[自动投递] {title} @ {company} → 异常: {e}")
+
+        print(f"[自动投递] 批次完成: {applied}/{len(to_apply)} 投递成功")
+        await ws_manager.broadcast({
+            "type": "auto_apply_batch_complete",
+            "total": len(to_apply),
+            "applied": applied,
+        })
+
+        return applied
+    finally:
+        chat_monitor.resume()
+        _auto_apply_running = False
 
 
 # ══════════════════════════════════════
@@ -469,6 +515,9 @@ class SearchRequest(BaseModel):
     welfare: Optional[str] = None
     limit: int = Field(default=60, ge=1, le=200)
     max_pages: int = Field(default=10, ge=1, le=30)
+    experience: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
 
 
 class ApplyRequest(BaseModel):
@@ -672,12 +721,24 @@ async def search_jobs(req: SearchRequest):
         jobs = _deduplicate_jobs(jobs)
         page_dup = raw_found - len(jobs)
 
+        # 构建搜索参数覆盖（前端传入的经验/薪资优先于设置）
+        overrides = {}
+        if req.experience:
+            parts = req.experience.split("-")
+            if len(parts) == 2:
+                overrides["experience_min"] = parts[0]
+                overrides["experience_max"] = parts[1]
+        if req.salary_min:
+            overrides["salary_min"] = req.salary_min
+        if req.salary_max:
+            overrides["salary_max"] = req.salary_max
+
         new_ids = []
         result_jobs = []
         db_existing = 0
         filtered_count = 0
         for j in jobs:
-            aid, is_new, app_dict = _save_job_with_dedup(j)
+            aid, is_new, app_dict = _save_job_with_dedup(j, overrides)
             if aid == 0 and not is_new:
                 # 被过滤掉的岗位（不符合经验要求或期望薪资）
                 filtered_count += 1
@@ -1367,8 +1428,24 @@ def get_auto_apply_logs_api(limit: int = 50):
 
 @router.post("/api/auto-apply/trigger")
 async def trigger_auto_apply():
-    """手动触发自动投递。"""
+    """手动触发自动投递（后台运行，立即返回）。"""
     if not state.automation or state.automation.page is None:
         raise HTTPException(status_code=503, detail="浏览器未启动")
-    await _execute_auto_apply()
-    return {"status": "ok"}
+
+    # 防止重复触发
+    for t in state.background_tasks:
+        if not t.done() and "智能投递" in (t.get_name() or ""):
+            raise HTTPException(status_code=409, detail="智能投递已在运行中")
+
+    async def _run():
+        try:
+            await _execute_auto_apply()
+        except Exception as e:
+            print(f"[智能投递] 后台执行异常: {e}")
+            import traceback
+            traceback.print_exc()
+
+    task = asyncio.create_task(_run(), name="智能投递")
+    task.add_done_callback(_safe_remove_task)
+    state.background_tasks.append(task)
+    return {"status": "ok", "message": "智能投递已启动"}

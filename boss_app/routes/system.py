@@ -99,7 +99,7 @@ async def start_automation():
         traceback.print_exc()
         print(f"[系统] 浏览器启动失败: {detail}")
         state.automation = None
-        return {"status": "error", "message": "浏览器启动失败，请检查浏览器安装状态后重试"}
+        return {"status": "error", "message": f"浏览器启动失败: {detail}"}
 
     if state.automation is None or state.automation.page is None:
         state.automation = None

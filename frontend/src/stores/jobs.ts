@@ -86,7 +86,7 @@ export const useJobsStore = defineStore('jobs', () => {
     }
   }
 
-  async function searchJobs(params: { keyword: string; city?: string; max_pages?: number }) {
+  async function searchJobs(params: { keyword: string; city?: string; max_pages?: number; experience?: string; salary_min?: string; salary_max?: string }) {
     loading.value = true
     try {
       await api.post('/api/jobs/search', params)
@@ -112,6 +112,10 @@ export const useJobsStore = defineStore('jobs', () => {
   async function batchApply(jobIds: number[]) {
     const urls = jobIds.map(id => jobs.value.find(j => j.id === id)?.job_url).filter(Boolean)
     return api.post('/api/jobs/apply-batch', { urls })
+  }
+
+  async function smartApply() {
+    return api.post('/api/auto-apply/trigger')
   }
 
   async function scoreJob(jobId: number) {
@@ -180,7 +184,7 @@ export const useJobsStore = defineStore('jobs', () => {
 
   return {
     jobs, loading, total, scoreProgress,
-    fetchJobs, searchJobs, applyJob, batchApply, scoreJob, batchScore,
+    fetchJobs, searchJobs, applyJob, batchApply, smartApply, scoreJob, batchScore,
     skipJob, deleteJobs,
     handleSearchComplete, handleApplyComplete, handleBatchComplete,
     handleScoreProgress, handleScoreComplete, handleAutoApplyComplete,

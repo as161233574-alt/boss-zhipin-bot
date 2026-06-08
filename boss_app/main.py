@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 # Windows 兼容性：设置事件循环策略以支持 Playwright 子进程
+# Playwright 需要 ProactorEventLoop 才能创建子进程
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,6 +93,10 @@ app.include_router(agents_router)
 
 # 初始化数据库
 init_db()
+
+# 初始化设置默认值
+from .models.settings import init_default_settings
+init_default_settings()
 
 
 @app.on_event("startup")

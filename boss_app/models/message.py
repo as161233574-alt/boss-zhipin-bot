@@ -63,15 +63,16 @@ def replace_conversation_messages(conversation_id: int, messages: List[dict]):
         sender = msg.get("sender", "hr")
         content = (msg.get("content") or "").strip()
         delivery_status = (msg.get("status") or msg.get("delivery_status") or "").strip()
+        sent_at = (msg.get("time") or "").strip()
         if not content:
             continue
         ai_generated = 1 if sender == "me" and content in old_ai else 0
-        rows.append((conversation_id, sender, content, delivery_status, ai_generated))
+        rows.append((conversation_id, sender, content, delivery_status, ai_generated, sent_at))
 
     try:
         db.execute("DELETE FROM messages WHERE conversation_id=?", (conversation_id,))
         db.executemany(
-            "INSERT INTO messages (conversation_id, sender, content, delivery_status, ai_generated) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO messages (conversation_id, sender, content, delivery_status, ai_generated, sent_at) VALUES (?, ?, ?, ?, ?, ?)",
             rows,
         )
         db.commit()

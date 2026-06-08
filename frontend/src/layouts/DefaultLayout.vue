@@ -61,7 +61,7 @@ function onMainMouseMove(e: MouseEvent) {
           />
         </div>
 
-        <div class="relative z-10 mx-auto max-w-7xl p-4 md:p-6">
+        <div class="relative z-10 mx-auto max-w-7xl h-full p-4 md:p-6 flex flex-col">
           <RouterView v-slot="{ Component, route }">
             <Transition name="page" mode="out-in">
               <component :is="Component" :key="route.path" />

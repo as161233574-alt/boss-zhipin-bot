@@ -49,28 +49,33 @@ def _keywords_match(job_title: str, job_desc: str, search_keywords: str) -> bool
     return False
 
 
-def check_job_match(job_data: dict) -> tuple[bool, str]:
+def check_job_match(job_data: dict, overrides: dict = None) -> tuple[bool, str]:
     """检查岗位是否匹配用户的期望条件。
+
+    Args:
+        job_data: 岗位数据
+        overrides: 可选覆盖参数，优先于设置。支持 experience_min, experience_max, salary_min, salary_max
 
     返回 (is_match, reason)
     """
     from ..models.settings import get_setting
+    overrides = overrides or {}
 
-    # 获取用户设置（带容错）
+    # 获取用户设置（带容错），overrides 优先
     try:
-        exp_min = int(get_setting("experience_min", "0"))
+        exp_min = int(overrides.get("experience_min") or get_setting("experience_min", "0"))
     except (ValueError, TypeError):
         exp_min = 0
     try:
-        exp_max = int(get_setting("experience_max", "3"))
+        exp_max = int(overrides.get("experience_max") or get_setting("experience_max", "3"))
     except (ValueError, TypeError):
         exp_max = 3
     try:
-        salary_min = float(get_setting("salary_min", "0") or "0")
+        salary_min = float(overrides.get("salary_min") or get_setting("salary_min", "0") or "0")
     except (ValueError, TypeError):
         salary_min = 0
     try:
-        salary_max = float(get_setting("salary_max", "999") or "999")
+        salary_max = float(overrides.get("salary_max") or get_setting("salary_max", "999") or "999")
     except (ValueError, TypeError):
         salary_max = 999
     salary_unit = get_setting("salary_unit", "K")
@@ -105,36 +110,24 @@ def check_job_match(job_data: dict) -> tuple[bool, str]:
 
     # 检查薪资范围
     salary = job_data.get("salary", "")
-    if salary:
-        salary_decoded = decode_salary(salary)
-        # 解析薪资，如"15-25K"、"200-300元/天"
-        salary_match = re.search(r"(\d+)\s*[-~]\s*(\d+)\s*([Kk]|元/天|元/月)?", salary_decoded)
-        if salary_match:
-            job_salary_min = float(salary_match.group(1))
-            job_salary_max = float(salary_match.group(2))
-            job_unit = salary_match.group(3) or "K"
+    if not salary:
+        return False, "薪资未知: 岗位无薪资信息"
+    salary_decoded = decode_salary(salary)
+    # 解析薪资，如"15-25K"、"200-300元/天"
+    salary_match = re.search(r"(\d+)\s*[-~]\s*(\d+)\s*([Kk]|元/天|元/月)?", salary_decoded)
+    if salary_match:
+        job_salary_min = float(salary_match.group(1))
+        job_salary_max = float(salary_match.group(2))
+        job_unit = salary_match.group(3) or "K"
 
-            # 统一单位比较
-            if job_unit == "K" and salary_unit == "K":
-                if job_salary_min > salary_max or job_salary_max < salary_min:
-                    return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
-            elif job_unit == "元/天" and salary_unit == "元/天":
-                if job_salary_min > salary_max or job_salary_max < salary_min:
-                    return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
-            else:
-                # 单位不同，需要转换
-                # K/月 -> 元/天: K * 1000 / 21.75
-                # 元/天 -> K/月: 元 * 21.75 / 1000
-                if job_unit == "K" and salary_unit == "元/天":
-                    job_min_daily = job_salary_min * 1000 / 21.75
-                    job_max_daily = job_salary_max * 1000 / 21.75
-                    if job_min_daily > salary_max or job_max_daily < salary_min:
-                        return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
-                elif job_unit == "元/天" and salary_unit == "K":
-                    job_min_monthly = job_salary_min * 21.75 / 1000
-                    job_max_monthly = job_salary_max * 21.75 / 1000
-                    if job_min_monthly > salary_max or job_max_monthly < salary_min:
-                        return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
+        # 日薪岗位（元/天）直接保留，不过滤
+        if job_unit == "元/天":
+            return True, "匹配（日薪）"
+
+        # 月薪岗位（K）按用户设置范围过滤
+        if job_unit == "K" and salary_unit == "K":
+            if job_salary_min > salary_max or job_salary_max < salary_min:
+                return False, f"薪资不匹配: 岗位{salary}, 用户期望{salary_min}-{salary_max}{salary_unit}"
 
     return True, "匹配"
 from ..core.database import init_db, get_db
@@ -279,6 +272,7 @@ class BossAutomation(BossScraper):
     def __init__(self, headless=False):
         super().__init__(headless)
         init_db()
+        self._last_click_time = 0.0  # 防抖：记录上次点击时间
 
     # ══════════════════════════════════════
     #  底层交互 helpers
@@ -692,6 +686,14 @@ class BossAutomation(BossScraper):
             # 只创建有 HR 名字的会话，避免"未知HR"垃圾数据
             if hr_name and len(hr_name) >= 2:
                 get_or_create_conversation(app_id, hr_name, hr_company, job_title)
+                # 将招呼语存入消息表，标记为 AI 生成，避免同步时被当作 HR 消息
+                if greeting_sent and greeting_text:
+                    try:
+                        conv = find_conversation_by_hr_name(hr_name)
+                        if conv:
+                            add_message(conv["id"], "me", greeting_text, ai_generated=True)
+                    except Exception:
+                        pass
 
             increment_daily_stat("applications_sent")
             print(f"  [OK] 投递成功")
@@ -735,17 +737,27 @@ class BossAutomation(BossScraper):
     #  聊天监控
     # ══════════════════════════════════════
 
-    async def navigate_to_chat(self) -> bool:
-        """导航到 BOSS 聊天页，切到「未读」标签，只显示有未读消息的会话。"""
+    async def navigate_to_chat(self, filter_type: str = "unread") -> bool:
+        """导航到 BOSS 聊天页。
+
+        filter_type:
+          - "unread": 切到「未读」标签（默认，用于监控）
+          - "all": 切到「全部」标签（用于同步/爬取所有会话）
+        """
         try:
             await self.page.goto("https://www.zhipin.com/web/geek/chat", wait_until="load", timeout=45000)
             await async_pause(2, 3)
-            # 点击「未读」标签，只显示有未读的会话
-            for sel in ['span.label-name:has-text("未读")', 'li:has-text("未读")', '.label-name:has-text("未读")']:
+            # 根据 filter_type 点击对应标签
+            tab_text = "全部" if filter_type == "all" else "未读"
+            for sel in [
+                f'span.label-name:has-text("{tab_text}")',
+                f'li:has-text("{tab_text}")',
+                f'.label-name:has-text("{tab_text}")',
+            ]:
                 try:
-                    unread_tab = self.page.locator(sel).first
-                    if await unread_tab.is_visible():
-                        await unread_tab.click()
+                    tab = self.page.locator(sel).first
+                    if await tab.is_visible():
+                        await tab.click()
                         await async_pause(1, 2)
                         break
                 except Exception:
@@ -835,119 +847,316 @@ class BossAutomation(BossScraper):
         return conversations
 
     async def read_visible_messages(self) -> List[dict]:
-        """读取当前右侧聊天窗口中的可见消息，避免把左侧会话列表误当聊天内容。"""
+        """读取当前右侧聊天窗口中的可见消息。
+
+        基于老版本验证过的选择器 + 新版去重和系统消息过滤：
+        - 消息容器：li.message-item, li[class*="message-item"], [class^="message-item_"]
+        - 发送者：item-myself/myself/self 类名 + 位置判断兜底
+        """
+        # ── 安全验证检测 ──
+        try:
+            verify_text = await self.page.evaluate("""() => {
+                const body = document.body ? document.body.innerText : '';
+                if (body.includes('异常访问') || body.includes('安全验证') || body.includes('请完成验证')) {
+                    return body.substring(0, 200);
+                }
+                return '';
+            }""")
+            if verify_text:
+                raise RuntimeError(f"遇到安全验证页面: {verify_text}")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+
         try:
             raw = await self.page.evaluate("""() => {
                 const result = [];
+                const seen = new Set();
                 const vw = window.innerWidth || 1200;
+
                 const visible = el => {
                     const r = el.getBoundingClientRect();
                     const style = getComputedStyle(el);
                     return r.width > 0 && r.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
                 };
+
                 const clean = text => (text || '')
                     .replace(/^(已读|未读|送达|发送失败|已发送)\\s*/g, '')
                     .replace(/\\n?(已读|未读|送达|发送失败|已发送)$/g, '')
                     .trim();
+
                 const pickStatus = text => {
                     const m = (text || '').match(/(^|\\n)\\s*(已读|未读|送达|发送失败|已发送)\\s*(\\n|$)/);
                     return m ? m[2] : '';
                 };
-                const push = (el, contentEl) => {
-                    if (!visible(el)) return;
-                    const r = el.getBoundingClientRect();
-                    if (r.left + r.width / 2 < vw * 0.35) return;
-                    const textNode = contentEl || el.querySelector('.text p, .text span:last-child, .text, [class*="bubble"], [class*="content"]');
-                    const fullText = el.innerText || '';
-                    const content = clean(textNode ? textNode.innerText : el.innerText);
-                    if (!content || /^(已读|未读|送达|发送失败|已发送)$/.test(content)) return;
-                    if (content.length > 1000) return;
-                    const cls = el.className || '';
-                    const sender = cls.includes('item-myself') || cls.includes('myself') || cls.includes('self') || r.left > vw * 0.52 ? 'me' : 'hr';
-                    const status = sender === 'me' ? pickStatus(fullText) : '';
-                    result.push({sender: sender, content: content, status: status});
+
+                // 系统消息关键词
+                const systemPatterns = [
+                    /^\\d+条消息$/, /^你与该职位/, /^对方已同意/, /^您的附件简历/,
+                    /^发简历.*换电话/, /^换微信/, /^已发送简历/, /^系统消息/,
+                    /^打招呼/, /^对方已查看/, /^该职位已/, /^投递成功/,
+                    /^消息已发出/, /^您已/, /^对方已/, /^职位已/
+                ];
+                const isSystemMsg = text => {
+                    for (const p of systemPatterns) { if (p.test(text)) return true; }
+                    return false;
                 };
 
-                document.querySelectorAll('li.message-item, li[class*="message-item"]').forEach(el => push(el));
-                if (result.length === 0) {
-                    document.querySelectorAll('[class*="message"] [class*="bubble"], [class*="msg"] [class*="bubble"], [class*="chat"] [class*="text"]').forEach(el => push(el, el));
+                // ── 按优先级逐个尝试选择器，只用第一个返回结果的 ──
+                const selectorList = [
+                    'li.message-item, li[class*="message-item"]',
+                    '[class^="message-item_"]',
+                    '[class*="chat-message"]',
+                ];
+                let items = [];
+                for (const sel of selectorList) {
+                    const found = document.querySelectorAll(sel);
+                    if (found.length > 0) { items = found; break; }
                 }
+                if (items.length === 0) return result;
+
+                // 父子去重：标记已处理元素的子树
+                const processed = new Set();
+
+                for (const el of items) {
+                    // 跳过已被父元素包含的子元素
+                    if (processed.has(el)) continue;
+                    if (!visible(el)) continue;
+                    const r = el.getBoundingClientRect();
+
+                    // 必须在聊天区域（右侧 60%），有合理尺寸
+                    if (r.width < 80 || r.height < 12 || r.height > 400) continue;
+                    if (r.left + r.width / 2 < vw * 0.35) continue;
+
+                    // 跳过按钮/输入框/链接
+                    if (['BUTTON', 'INPUT', 'A', 'NAV', 'HEADER', 'FOOTER'].includes(el.tagName)) continue;
+                    if (el.children.length > 20) continue;
+
+                    const fullText = el.innerText || '';
+                    const content = clean(fullText);
+                    if (!content || content.length > 1000) continue;
+                    if (/^(已读|未读|送达|发送失败|已发送)$/.test(content)) continue;
+                    if (isSystemMsg(content)) continue;
+
+                    // ── 发送者识别：老版本方式 ──
+                    const cls = el.className || '';
+                    const sender = cls.includes('item-myself') || cls.includes('myself') || cls.includes('self') || r.left > vw * 0.52 ? 'me' : 'hr';
+
+                    // ── 提取时间戳 ──
+                    let msgTime = '';
+                    const timeEl = el.querySelector('[class*="time"], [class*="date"], time, [class*="Time"], [class*="Date"]');
+                    if (timeEl) msgTime = (timeEl.innerText || '').trim();
+                    if (!msgTime) {
+                        const timeMatch = content.match(/(^|\\n)\\s*(\\d{1,2}:\\d{2}(?::\\d{2})?)\\s*(\\n|$)/);
+                        if (timeMatch) msgTime = timeMatch[2];
+                    }
+
+                    // ── 提取状态（仅自己发的消息）──
+                    const status = sender === 'me' ? pickStatus(fullText) : '';
+
+                    // ── 去重：sender + content + time 三元组 ──
+                    const dedupKey = sender + '|' + content.substring(0, 80) + '|' + msgTime;
+                    if (seen.has(dedupKey)) continue;
+                    seen.add(dedupKey);
+
+                    // 标记所有子元素为已处理，防止嵌套重复
+                    const descendants = el.querySelectorAll('*');
+                    for (const d of descendants) processed.add(d);
+
+                    result.push({ sender, content, status, time: msgTime });
+                }
+
                 return result;
             }""")
             return raw or []
+        except RuntimeError:
+            raise
         except Exception:
             return []
 
     async def open_conversation_by_name(self, hr_name: str) -> bool:
-        """在聊天页中按 HR 名字定位并打开对应会话。"""
+        """在聊天页中按 HR 名字定位并打开对应会话。
+
+        流程：
+        1. 确保在聊天页，等待会话列表加载
+        2. 点击防抖：1 秒内不允许重复点击
+        3. 使用动态类名匹配会话列表项
+        4. 点击后等待 [class^="message-item_"] 元素出现
+        5. 额外等待 1 秒确保所有消息完全渲染
+        6. 检测安全验证页面
+        """
         try:
+            import time as _time
+
+            # ── 点击防抖：1 秒内不允许重复点击 ──
+            now = _time.time()
+            if now - self._last_click_time < 1.0:
+                print(f"  [!] 点击过于频繁，跳过 ({hr_name})")
+                return False
+            self._last_click_time = now
+
+            # ── 提取纯 HR 名字（去掉公司和职位信息）──
+            pure_name = hr_name.split('\n')[0].strip()
+            if not pure_name:
+                pure_name = hr_name
+
+            # ── 第一步：确保在聊天页 ──
             current_url = self.page.url
             if "/web/geek/chat" not in current_url:
-                await self.page.goto("https://www.zhipin.com/web/geek/chat", wait_until="load", timeout=45000)
+                await self.page.goto(
+                    "https://www.zhipin.com/web/geek/chat",
+                    wait_until="domcontentloaded",
+                    timeout=45000,
+                )
+                await async_pause(1, 2)
+
+            # 切换到「全部」标签，确保能看到所有会话（不仅是未读）
+            for sel in [
+                'span.label-name:has-text("全部")',
+                'li:has-text("全部")',
+                '.label-name:has-text("全部")',
+            ]:
+                try:
+                    tab = self.page.locator(sel).first
+                    if await tab.is_visible():
+                        await tab.click()
+                        await async_pause(1, 2)
+                        break
+                except Exception:
+                    pass
+
+            # 等待会话列表加载完成
+            try:
+                await self.page.wait_for_selector(
+                    '[class^="user-list_"], .user-list, li[role="listitem"]',
+                    timeout=10000,
+                )
+            except Exception:
                 await async_pause(2, 3)
 
-            # 优先用 Playwright 文本选择器点击列表项。
+            # ── 安全验证检测 ──
+            try:
+                page_text = await self.page.evaluate("() => document.body.innerText.substring(0, 2000)")
+                if any(kw in page_text for kw in ["异常访问", "安全验证", "请完成验证", "滑动验证"]):
+                    print(f"  [!] 检测到安全验证页面，无法打开会话 ({pure_name})")
+                    return False
+            except Exception:
+                pass
+
+            # ── 第二步：使用动态类名匹配会话列表项并点击 ──
+            clicked = False
+
+            # 调试：检查当前页面状态
+            try:
+                current_url = self.page.url
+                print(f"  [DEBUG] 当前URL: {current_url}")
+                # 检查各种会话列表选择器
+                for sel in ['[class^="user-list_"] li', '.user-list li', 'li[role="listitem"]']:
+                    count = await self.page.locator(sel).count()
+                    if count > 0:
+                        print(f"  [DEBUG] '{sel}' 找到 {count} 个")
+                        # 获取第一个会话的名字
+                        first_text = await self.page.locator(sel).first.inner_text()
+                        print(f"  [DEBUG] 第一个会话: {first_text[:50]}")
+                        break
+            except Exception as e:
+                print(f"  [DEBUG] 检查页面状态失败: {e}")
+
+            # 策略 1：Playwright locator 匹配会话列表项
             for sel in [
-                f'li[role="listitem"]:has-text("{hr_name}")',
-                f'.user-list li:has-text("{hr_name}")',
-                f'[class*="friend"]:has-text("{hr_name}")',
-                f'text="{hr_name}"',
+                f'[class^="user-list_"] li:has-text("{pure_name}")',
+                f'.user-list li:has-text("{pure_name}")',
+                f'li[role="listitem"]:has-text("{pure_name}")',
+                f'[class*="conversation"]:has-text("{pure_name}")',
             ]:
                 try:
                     loc = self.page.locator(sel).first
                     if await loc.count() > 0 and await loc.is_visible():
-                        await loc.click(force=True, timeout=3000)
-                        await async_pause(1, 2)
-                        return True
+                        await loc.click(timeout=3000)
+                        clicked = True
+                        break
                 except Exception:
-                    pass
+                    continue
 
-            # 兜底：在 DOM 中找包含 HR 名的最小可点击会话容器并触发点击。
-            clicked = await self.page.evaluate(
-                """(name) => {
-                    const visible = el => {
-                        const r = el.getBoundingClientRect();
-                        const s = getComputedStyle(el);
-                        return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-                    };
-                    const candidates = [];
-                    const selectors = [
-                        '.user-list li', 'li[role="listitem"]', '.friend-content',
-                        '[class*="friend"]', '[class*="conversation"]', '[class*="chat-item"]'
-                    ];
-                    document.querySelectorAll(selectors.join(',')).forEach(el => {
-                        const text = (el.innerText || '');
-                        if (text.length < 3 || text.length > 200) return;
-                        if (!text.includes(name)) return;
-                        if (!visible(el)) return;
-                        const rect = el.getBoundingClientRect();
-                        const nameEl = el.querySelector('.name-text, [class*="name"]');
-                        const nameText = (nameEl && nameEl.innerText || '').trim();
-                        const exact = nameText === name || text.split('\\n').some(line => line.trim() === name);
-                        candidates.push({el: el, exact: exact ? 1 : 0, area: rect.width * rect.height, top: rect.top});
-                    });
-                    candidates.sort((a,b) => b.exact - a.exact || a.area - b.area || a.top - b.top);
-                    for (const c of candidates) {
-                        try {
-                            c.el.scrollIntoView({block: 'center'});
-                            const r = c.el.getBoundingClientRect();
-                            const opts = {bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2};
-                            c.el.dispatchEvent(new MouseEvent('mousedown', opts));
-                            c.el.dispatchEvent(new MouseEvent('mouseup', opts));
-                            c.el.dispatchEvent(new MouseEvent('click', opts));
-                            return true;
-                        } catch(e) {}
-                    }
-                    return false;
-                }""",
-                hr_name,
-            )
-            if clicked:
-                await async_pause(1, 2)
-                return True
-            return False
+            # 策略 2：JS 精确匹配（兜底）
+            if not clicked:
+                clicked = await self.page.evaluate(
+                    """(name) => {
+                        const visible = el => {
+                            const r = el.getBoundingClientRect();
+                            const s = getComputedStyle(el);
+                            return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+                        };
+                        // 动态类名选择器
+                        const selectors = [
+                            '[class^="user-list_"] li',
+                            '.user-list li',
+                            'li[role="listitem"]',
+                            '[class*="conversation"] li',
+                            '[class*="session-item"]',
+                        ];
+                        const candidates = [];
+                        document.querySelectorAll(selectors.join(',')).forEach(el => {
+                            if (!visible(el)) return;
+                            const text = (el.innerText || '').trim();
+                            if (text.length < 2 || text.length > 300) return;
+                            if (!text.includes(name)) return;
+                            // 精确匹配：名字元素或第一行
+                            const nameEl = el.querySelector(
+                                '[class*="name_"], .user-name, .name-text, [class*="name"]'
+                            );
+                            const nameText = (nameEl ? nameEl.innerText : '').trim();
+                            const firstLine = text.split('\\n')[0].trim();
+                            const isExact = nameText === name || firstLine === name;
+                            const rect = el.getBoundingClientRect();
+                            candidates.push({
+                                el, exact: isExact ? 0 : 1,
+                                area: rect.width * rect.height,
+                                top: rect.top,
+                            });
+                        });
+                        if (candidates.length === 0) return false;
+                        candidates.sort((a, b) => a.exact - b.exact || a.area - b.area || a.top - b.top);
+                        const target = candidates[0].el;
+                        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                        target.click();
+                        return true;
+                    }""",
+                    pure_name,
+                )
+
+            if not clicked:
+                print(f"  [!] 未找到 HR 会话项: {pure_name} (原始: {hr_name})")
+                return False
+
+            # ── 第三步：等待右侧聊天窗口加载完成 ──
+            # 等待 [class^="message-item_"] 元素出现
+            try:
+                await self.page.wait_for_selector(
+                    '[class^="message-item_"]',
+                    timeout=8000,
+                )
+            except Exception:
+                await async_pause(2, 3)
+
+            # 额外等待 1 秒确保所有消息完全渲染
+            await async_pause(1.0, 1.5)
+
+            # ── 安全验证检测（点击后）──
+            try:
+                page_text = await self.page.evaluate("() => document.body.innerText.substring(0, 1000)")
+                if any(kw in page_text for kw in ["异常访问", "安全验证", "请完成验证"]):
+                    print(f"  [!] 点击后触发安全验证 ({pure_name})")
+                    return False
+            except Exception:
+                pass
+
+            print(f"  [OK] 已打开会话: {pure_name}")
+            return True
+
         except Exception as e:
-            print(f"  [!] 打开会话失败 ({hr_name}): {e}")
+            print(f"  [!] 打开会话失败 ({pure_name}): {e}")
             return False
 
     async def send_message(self, text: str, fast: bool = True) -> bool:
@@ -1423,11 +1632,16 @@ class BossAutomation(BossScraper):
 
             new_count = 0
             clean_msgs = []
+            seen_keys = set()
             for msg in msgs:
                 sender = msg.get("sender", "hr")
                 content = (msg.get("content") or "").strip()
                 if not content:
                     continue
+                key = (sender, content[:80])
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
                 clean_msgs.append({"sender": sender, "content": content, "status": msg.get("status", "")})
 
             if clean_msgs:

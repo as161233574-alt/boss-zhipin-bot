@@ -23,6 +23,15 @@ export function useJobActions() {
     }
   }
 
+  async function smartApply() {
+    try {
+      await jobsStore.smartApply()
+      success('智能投递已启动，将自动筛选高分岗位投递')
+    } catch (e: any) {
+      error(`启动失败: ${e.message}`)
+    }
+  }
+
   async function scoreJob(jobId: number) {
     try {
       await jobsStore.scoreJob(jobId)
@@ -50,5 +59,5 @@ export function useJobActions() {
     }
   }
 
-  return { applyJob, batchApply, scoreJob, batchScore, skipJob }
+  return { applyJob, batchApply, smartApply, scoreJob, batchScore, skipJob }
 }

@@ -109,6 +109,7 @@ def init_db():
     # ALTER TABLE 语句用于兼容旧数据库（新增列）
     _migrations = [
         ("messages", "delivery_status", "TEXT"),
+        ("messages", "sent_at", "TEXT"),
         ("conversations", "interest_level", "TEXT"),
         ("conversations", "hr_wechat", "TEXT"),
         ("conversations", "wechat_shared_at", "TIMESTAMP"),

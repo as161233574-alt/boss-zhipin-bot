@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from boss_app.models.settings import get_setting
+from boss_app.core import state
 
 
 class ChatMonitor:
@@ -73,9 +74,9 @@ class ChatMonitor:
             if cfg["api_key"] and len(cfg["api_key"]) > 10:
                 print(f"[监控] AI API 已配置（{cfg['model']}），自动回复就绪")
             else:
-                print("[监控] ⚠️ AI API Key 未配置，请在前端设置页配置")
+                print("[监控] [WARN] AI API Key 未配置，请在前端设置页配置")
         except Exception as e:
-            print(f"[监控] ⚠️ AI 回复系统加载失败: {e}")
+            print(f"[监控] [WARN] AI 回复系统加载失败: {e}")
 
         # 首次立即跑一轮监控，不等延迟
         if automation:
@@ -129,22 +130,28 @@ class ChatMonitor:
 
                 # 每5轮轻量保活，避免 BOSS session 超时
                 if _heartbeat_count % 5 == 0:
-                    await automation.keep_alive()
+                    if not state.browser_sync_lock.locked():
+                        async with state.browser_sync_lock:
+                            await automation.keep_alive()
 
                 if get_setting("auto_reply_enabled", "false") != "true":
                     continue
 
-                result = await automation.run_chat_monitor_cycle()
+                # 获取浏览器锁，避免与搜索/投递等操作冲突
+                if state.browser_sync_lock.locked():
+                    continue
+                async with state.browser_sync_lock:
+                    result = await automation.run_chat_monitor_cycle()
 
-                has_new = result.get("new_messages", 0) > 0 or result.get("new_conversations")
-                if has_new:
-                    await ws_manager.broadcast({"type": "new_messages", "summary": result})
-                if result.get("replies_sent", 0) > 0:
-                    await ws_manager.broadcast({"type": "auto_reply_sent", "summary": result})
-                if result.get("wechat_exchanged"):
-                    await ws_manager.broadcast({"type": "wechat_exchanged"})
+                    has_new = result.get("new_messages", 0) > 0 or result.get("new_conversations")
+                    if has_new:
+                        await ws_manager.broadcast({"type": "new_messages", "summary": result})
+                    if result.get("replies_sent", 0) > 0:
+                        await ws_manager.broadcast({"type": "auto_reply_sent", "summary": result})
+                    if result.get("wechat_exchanged"):
+                        await ws_manager.broadcast({"type": "wechat_exchanged"})
 
-                safety_ok = await automation.check_page_safety()
+                    safety_ok = await automation.check_page_safety()
                 if not safety_ok:
                     await ws_manager.broadcast(
                         {

@@ -48,6 +48,66 @@ def get_all_settings() -> dict:
     return {r["key"]: r["value"] for r in rows}
 
 
+# ── 所有设置项的默认值 ──
+DEFAULT_SETTINGS = {
+    # AI 配置
+    "ai_platform": "deepseek",
+    "ai_api_key": "",
+    "ai_base_url": "https://api.deepseek.com/v1",
+    "ai_model": "deepseek-chat",
+    # 搜索配置
+    "search_keywords": "",
+    "default_city": "",
+    "search_max_pages": "3",
+    # 投递配置
+    "auto_apply_enabled": "false",
+    "auto_apply_threshold": "60",
+    "auto_apply_hr_active_required": "true",
+    "filter_inactive_hr": "true",
+    "daily_apply_limit": "50",
+    "batch_delay_min_sec": "30",
+    "batch_delay_max_sec": "90",
+    "experience_min": "",
+    "experience_max": "",
+    "salary_min": "",
+    "salary_max": "",
+    "salary_unit": "K",
+    # 聊天配置
+    "greeting_template": "",
+    "greeting_enabled": "true",
+    "greeting_type": "custom",
+    "smart_greeting_enabled": "false",
+    "auto_reply_enabled": "false",
+    "reply_style": "热情友好",
+    "min_reply_delay_sec": "3",
+    "max_reply_delay_sec": "8",
+    # 定时任务
+    "auto_schedule_enabled": "false",
+    "auto_schedule_cron": "09:00,14:00",
+    # 简历
+    "resume_summary": "",
+    "resume_full_text": "",
+    "resume_filename": "",
+    "resume_text_length": "0",
+    # 其他
+    "wechat_id": "",
+    "selector_overrides": "{}",
+    "company_blacklist": "",
+    "hr_blacklist": "",
+}
+
+
+def init_default_settings():
+    """初始化所有设置的默认值（仅设置不存在的项，不覆盖已有值）。"""
+    db = get_db()
+    for key, value in DEFAULT_SETTINGS.items():
+        db.execute(
+            "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (key, value),
+        )
+    db.commit()
+
+
 # ══════════════════════════════════════
 #  Daily Stats
 # ══════════════════════════════════════

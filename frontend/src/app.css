@@ -476,3 +476,46 @@ kbd {
   @apply inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-mono font-medium text-muted-foreground;
   box-shadow: 0 1px 0 oklch(0.1 0 0 / 0.08);
 }
+
+/* --- Markdown content in chat --- */
+.md-content p { margin: 0.25em 0; }
+.md-content p:first-child { margin-top: 0; }
+.md-content p:last-child { margin-bottom: 0; }
+.md-content strong { font-weight: 600; }
+.md-content em { font-style: italic; }
+.md-content code {
+  @apply rounded bg-black/5 px-1 py-0.5 text-xs font-mono;
+}
+.dark .md-content code {
+  @apply bg-white/10;
+}
+.md-content pre {
+  @apply my-2 rounded-lg bg-black/5 p-3 overflow-x-auto;
+}
+.dark .md-content pre {
+  @apply bg-white/5;
+}
+.md-content pre code {
+  @apply bg-transparent p-0;
+}
+.md-content a {
+  @apply text-primary underline underline-offset-2;
+}
+.md-content ul, .md-content ol {
+  @apply my-1 pl-5;
+}
+.md-content ul { list-style-type: disc; }
+.md-content ol { list-style-type: decimal; }
+.md-content li { @apply my-0.5; }
+.md-content blockquote {
+  @apply my-2 border-l-2 border-primary/30 pl-3 text-muted-foreground italic;
+}
+
+/* --- Context menu --- */
+.context-menu {
+  @apply z-50 min-w-[120px] rounded-lg border border-border bg-card p-1 shadow-lg;
+  animation: scale-in 150ms var(--ease-out-quart);
+}
+.context-menu-item {
+  @apply flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-accent cursor-pointer;
+}

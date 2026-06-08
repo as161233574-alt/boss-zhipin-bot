@@ -26,6 +26,7 @@ from ..models.settings import (
     get_daily_stats,
     get_stats_range,
     get_funnel_stats,
+    DEFAULT_SETTINGS,
 )
 from ..services.resume_parser import parse_resume_file
 
@@ -40,32 +41,42 @@ router = APIRouter()
 class SettingsUpdate(BaseModel):
     greeting_template: Optional[str] = None
     greeting_enabled: Optional[str] = None
+    greeting_type: Optional[str] = None
     ai_reply_style: Optional[str] = None
+    ai_platform: Optional[str] = None
     daily_apply_limit: Optional[str] = None
     auto_reply_enabled: Optional[str] = None
     min_reply_delay_sec: Optional[str] = None
     max_reply_delay_sec: Optional[str] = None
+    reply_delay_min: Optional[str] = None  # 前端别名
+    reply_delay_max: Optional[str] = None  # 前端别名
     batch_delay_min_sec: Optional[str] = None
     batch_delay_max_sec: Optional[str] = None
     resume_summary: Optional[str] = None
     wechat_id: Optional[str] = None
-    search_keywords: Optional[str] = None  # 逗号分隔的搜索关键词
-    default_city: Optional[str] = None  # 默认搜索城市
-    selector_overrides: Optional[str] = None  # JSON 格式的选择器覆盖
-    ai_api_key: Optional[str] = None  # AI API Key
-    ai_base_url: Optional[str] = None  # AI Base URL
-    ai_model: Optional[str] = None  # AI 模型名称
-    auto_schedule_enabled: Optional[str] = None  # 定时任务开关
-    auto_schedule_cron: Optional[str] = None  # 定时任务时间
-    auto_apply_enabled: Optional[str] = None  # 自动投递开关
-    auto_apply_threshold: Optional[str] = None  # 自动投递最低综合分阈值
-    auto_apply_hr_active_required: Optional[str] = None  # 自动投递是否要求HR活跃
-    filter_inactive_hr: Optional[str] = None  # 过滤3天以上不活跃HR岗位
-    experience_min: Optional[str] = None  # 最低工作经验(年)
-    experience_max: Optional[str] = None  # 最高工作经验(年)
-    salary_min: Optional[str] = None  # 最低薪资
-    salary_max: Optional[str] = None  # 最高薪资
-    salary_unit: Optional[str] = None  # 薪资单位(K/元/天)
+    search_keywords: Optional[str] = None
+    default_city: Optional[str] = None
+    search_city: Optional[str] = None  # 前端别名
+    search_max_pages: Optional[str] = None
+    selector_overrides: Optional[str] = None
+    ai_api_key: Optional[str] = None
+    ai_base_url: Optional[str] = None
+    ai_model: Optional[str] = None
+    auto_schedule_enabled: Optional[str] = None
+    auto_schedule_cron: Optional[str] = None
+    auto_apply_enabled: Optional[str] = None
+    auto_apply_threshold: Optional[str] = None
+    auto_apply_min_score: Optional[str] = None  # 前端别名
+    auto_apply_hr_active_required: Optional[str] = None
+    filter_inactive_hr: Optional[str] = None
+    smart_greeting_enabled: Optional[str] = None
+    experience_min: Optional[str] = None
+    experience_max: Optional[str] = None
+    salary_min: Optional[str] = None
+    salary_max: Optional[str] = None
+    salary_unit: Optional[str] = None
+    company_blacklist: Optional[str] = None
+    hr_blacklist: Optional[str] = None
 
 
 # ══════════════════════════════════════
@@ -75,16 +86,29 @@ class SettingsUpdate(BaseModel):
 
 @router.get("/api/settings")
 def read_settings():
-    settings = get_all_settings()
+    # 合并默认值 + 数据库值
+    settings = {**DEFAULT_SETTINGS, **get_all_settings()}
     # 检查AI Key是否已配置
     ai_key = settings.get("ai_api_key", "")
     settings["ai_key_configured"] = "true" if ai_key and len(ai_key) > 10 else "false"
     settings.pop("ai_api_key", None)  # 不泄露完整密钥
+    # 字段别名：后端key → 前端key
+    settings["search_city"] = settings.get("default_city", "")
+    settings["auto_apply_min_score"] = settings.get("auto_apply_threshold", "60")
+    settings["reply_delay_min"] = settings.get("min_reply_delay_sec", "3")
+    settings["reply_delay_max"] = settings.get("max_reply_delay_sec", "8")
     return {"settings": settings}
 
 
 @router.put("/api/settings")
 async def update_settings(req: SettingsUpdate):
+    # 前端字段名 → 后端字段名 映射
+    FIELD_ALIASES = {
+        "search_city": "default_city",
+        "auto_apply_min_score": "auto_apply_threshold",
+        "reply_delay_min": "min_reply_delay_sec",
+        "reply_delay_max": "max_reply_delay_sec",
+    }
     updates = {}
     for k, v in req.model_dump().items():
         if k == "ai_api_key" and v:
@@ -92,7 +116,9 @@ async def update_settings(req: SettingsUpdate):
             updates["ai_key_configured"] = "true"
             continue
         if v is not None:
-            set_setting(k, str(v))
+            # 写入时使用后端真实字段名
+            real_key = FIELD_ALIASES.get(k, k)
+            set_setting(real_key, str(v))
             updates[k] = str(v)
     await ws_manager.broadcast({"type": "settings_updated", "updates": updates})
     return {"status": "ok", "updated": updates}

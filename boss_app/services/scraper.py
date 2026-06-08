@@ -484,7 +484,7 @@ class BossScraper:
         await self.page.goto("https://www.zhipin.com/web/user/?ka=header-login")
         await async_pause(2, 4)
         await self.page.bring_to_front()
-        print("\n🔓 浏览器已打开，请扫码登录")
+        print("\n[UNLOCK] 浏览器已打开，请扫码登录")
         last = self.page.url
         logged_in = False
         for i in range(600):
@@ -497,30 +497,30 @@ class BossScraper:
                 any(p in url for p in ["/web/geek", "/web/geek/chat", "/job_detail"])
                 and not await self._login_prompt_visible()
             ):
-                print("✅ 登录成功")
+                print("[OK] 登录成功")
                 logged_in = True
                 break
             last = url
             if i > 0 and i % 30 == 0:
-                print("  ⏳ %ds" % i)
+                print("  [WAIT] %ds" % i)
         if not logged_in:
             raise TimeoutError("扫码登录超时或未确认进入已登录页面")
         state = await self._ctx.storage_state()
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False)
-        print("✅ 登录状态已保存")
+        print("[OK] 登录状态已保存")
 
         # 预热：导航到聊天页验证 session 稳定性，确保 token 生效
         try:
             await self.page.goto("https://www.zhipin.com/web/geek/chat", wait_until="load", timeout=30000)
             await async_pause(3, 5)
             if not await self._login_prompt_visible():
-                print("✅ 会话预热成功")
+                print("[OK] 会话预热成功")
             else:
-                print("⚠️ 预热时仍检测到登录提示，可能需要手动刷新页面")
+                print("[WARN] 预热时仍检测到登录提示，可能需要手动刷新页面")
         except Exception as e:
-            print(f"⚠️ 会话预热失败: {e}")
+            print(f"[WARN] 会话预热失败: {e}")
 
     # ── 搜索列表页 ──
 
@@ -587,7 +587,7 @@ class BossScraper:
             去重后的岗位列表
         """
         url = "https://www.zhipin.com/web/geek/job?query=%s&city=%s" % (
-            quote_plus(keyword),
+            quote_plus(keyword, encoding='utf-8'),
             city_code,
         )
         for attempt in range(3):
@@ -595,6 +595,33 @@ class BossScraper:
                 await self.page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 await async_pause(3, 5)
 
+                # 调试：检查搜索页面状态
+                try:
+                    page_info = await self.page.evaluate("""() => {
+                        return {
+                            url: location.href,
+                            title: document.title,
+                            bodyLen: (document.body.innerText || '').length,
+                            firstLines: (document.body.innerText || '').split('\\n').filter(s=>s.trim()).slice(0, 8).join(' | '),
+                            linkCount: document.querySelectorAll('a[href*="/job_detail/"]').length,
+                            hasLogin: (document.body.innerText || '').includes('登录'),
+                            hasSearch: document.querySelectorAll('.job-search-form, .search-job-box, [class*="search-box"]').length,
+                        };
+                    }""")
+                    print(f"  [搜索页面] URL: {page_info.get('url','?')}")
+                    print(f"  [搜索页面] 标题: {page_info.get('title','?')}")
+                    print(f"  [搜索页面] 链接数: {page_info.get('linkCount',0)}, 需登录: {page_info.get('hasLogin',False)}")
+                    print(f"  [搜索页面] 内容: {page_info.get('firstLines','')[:300]}")
+                except Exception as e:
+                    print(f"  [搜索页面] 调试失败: {e}")
+
+                # 尝试从 BOSS直聘 API 获取结构化数据（包含真实薪资）
+                api_jobs = await self._extract_jobs_from_api(keyword, city_code)
+                if api_jobs:
+                    print(f"  [API] 获取到 {len(api_jobs)} 个岗位（含薪资）")
+                    return api_jobs
+
+                # 降级：从 DOM 提取
                 all_jobs = []
                 seen_urls = set()
                 no_new_count = 0
@@ -624,7 +651,7 @@ class BossScraper:
                         # 滚动加载后重新扫描全部内容
                         await self._scroll_all()
 
-                    jobs = await self._extract_current_page_jobs()
+                    jobs = await self._extract_job_cards()
 
                     # 去重：只保留新岗位
                     new_jobs = []
@@ -673,10 +700,10 @@ class BossScraper:
 
             except Exception as e:
                 if attempt < 2:
-                    print(f"  ⚠️ 搜索重试 ({attempt+1}/3): {e}")
+                    print(f"  [WARN] 搜索重试 ({attempt+1}/3): {e}")
                     await async_pause(2, 4)
                 else:
-                    print(f"  ❌ 搜索失败: {keyword}@{city_code}: {e}")
+                    print(f"  [FAIL] 搜索失败: {keyword}@{city_code}: {e}")
                     return []
 
     def _filter_by_welfare(self, jobs, welfare_keywords):
@@ -692,6 +719,79 @@ class BossScraper:
                 filtered.append(j)
         return filtered
 
+    async def _extract_jobs_from_api(self, keyword, city_code, max_pages=3):
+        """通过 BOSS直聘 API 获取结构化岗位数据（包含真实薪资）。"""
+        import json
+        all_jobs = []
+        seen_urls = set()
+
+        for page in range(1, max_pages + 1):
+            try:
+                api_url = f"https://www.zhipin.com/wapi/zpgeek/search/joblist.json?query={quote_plus(keyword, encoding='utf-8')}&city={city_code}&page={page}&pageSize=30"
+                data = await self.page.evaluate("""async (url) => {
+                    try {
+                        const res = await fetch(url, {credentials: 'include'});
+                        return await res.json();
+                    } catch(e) {
+                        return {error: e.message};
+                    }
+                }""", api_url)
+
+                if not data or data.get("error"):
+                    print(f"  [API] 第{page}页请求失败: {data.get('error', 'unknown')}")
+                    break
+
+                job_list = data.get("zpData", {}).get("jobList", [])
+                if not job_list:
+                    print(f"  [API] 第{page}页无岗位数据")
+                    break
+
+                for job in job_list:
+                    url = "/job_detail/" + job.get("encryptJobId", "") + ".html"
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+
+                    # 薪资格式化：API 返回 salaryDesc 或 salary
+                    salary = job.get("salaryDesc", "") or job.get("salary", "")
+                    if not salary:
+                        # 从 lowSalary/highSalary 构建
+                        low = job.get("lowSalary", 0)
+                        high = job.get("highSalary", 0)
+                        if low and high:
+                            salary = f"{int(low)}-{int(high)}K"
+
+                    title = job.get("jobName", "")
+                    company = job.get("brandName", "")
+                    city = job.get("cityName", "") + (job.get("areaDistrict", "") or "")
+                    experience = job.get("jobExperience", "")
+                    education = job.get("jobDegree", "")
+
+                    all_jobs.append({
+                        "title": title,
+                        "salary": salary,
+                        "company": company,
+                        "experience": experience,
+                        "education": education,
+                        "city": city,
+                        "url": url,
+                        "description": "",
+                        "hr_name": job.get("bossName", ""),
+                        "hr_title": job.get("bossTitle", ""),
+                    })
+
+                print(f"  [API] 第{page}页: 获取 {len(job_list)} 个岗位（累计 {len(all_jobs)}）")
+
+                # 翻页间隔
+                if page < max_pages:
+                    await async_pause(2, 3)
+
+            except Exception as e:
+                print(f"  [API] 第{page}页异常: {e}")
+                break
+
+        return all_jobs
+
     async def _extract_job_cards(self):
         """优先从岗位卡片 DOM 提取，避免正文行号变化导致链接和岗位错配。"""
         try:
@@ -704,13 +804,14 @@ class BossScraper:
             rows = await self.page.evaluate("""() => {
                 const cards = [];
                 const seen = new Set();
+                const skipReasons = {dup:0, noSalary:0, noTitle:0, badTitle:0, ok:0};
                 // 遍历所有岗位链接
                 const allLinks = document.querySelectorAll('a[href*="/job_detail/"]');
-                const debugInfo = {totalLinks: allLinks.length, hrefs: []};
+                const debugInfo = {totalLinks: allLinks.length, hrefs: [], sampleTexts: []};
                 allLinks.forEach(a => {
                     const rawHref = a.getAttribute('href') || '';
                     debugInfo.hrefs.push(rawHref);
-                    if (!rawHref || seen.has(rawHref)) return;
+                    if (!rawHref || seen.has(rawHref)) { skipReasons.dup++; return; }
                     seen.add(rawHref);
                     const href = a.href || rawHref;
 
@@ -722,6 +823,7 @@ class BossScraper:
                         const cls = card.className || '';
                         if (cls.includes('job-card') || cls.includes('job-primary') ||
                             cls.includes('search-job') || cls.includes('job-list') ||
+                            cls.includes('job-info') || cls.includes('job-detail') ||
                             card.tagName === 'LI') break;
                     }
                     if (!card) card = a;
@@ -729,19 +831,50 @@ class BossScraper:
                     const text = (card.innerText || '').trim();
                     const lines = text.split('\\n').map(s => s.trim()).filter(Boolean);
 
-                    // 薪资：匹配 XX-XXK 格式
+                    // 保存前3个链接的文本和薪资HTML用于调试
+                    if (debugInfo.sampleTexts.length < 3) {
+                        const salaryArea = card.querySelector('.salary, .job-salary, [class*="salary"], [class*="Salary"], .red, .text-red, .job-info, .info-primary');
+                        // 尝试从 data 属性获取薪资
+                        const dataAttrs = {};
+                        for (const attr of (salaryArea || card).attributes) {
+                            if (attr.name.startsWith('data-')) dataAttrs[attr.name] = attr.value;
+                        }
+                        debugInfo.sampleTexts.push({
+                            text: lines.slice(0, 8).join(' | '),
+                            salaryHTML: salaryArea ? salaryArea.innerHTML.substring(0, 300) : 'NOT_FOUND',
+                            salaryClass: salaryArea ? salaryArea.className : 'NONE',
+                            dataAttrs: JSON.stringify(dataAttrs),
+                            cardOuterHTML: card.outerHTML.substring(0, 500),
+                        });
+                    }
+
+                    // 薪资：先尝试从专门的薪资元素提取，再从文本行匹配
                     let salary = '';
-                    for (const l of lines) {
-                        if (/\\d+[-~]\\d+[Kk元]/.test(l) && l.length < 30) {
-                            salary = l;
-                            break;
+                    let salIdx = -1;
+
+                    // 方法1: 从薪资专用元素提取（BOSS直聘用特殊字体渲染数字，innerText可能丢失）
+                    const salaryEl = card.querySelector('.salary, .job-salary, [class*="salary"], [class*=" Salary"], .red, .text-red');
+                    if (salaryEl) {
+                        const salText = (salaryEl.textContent || salaryEl.innerText || '').trim();
+                        if (salText && /\\d/.test(salText)) {
+                            salary = salText;
                         }
                     }
-                    if (!salary) return; // 没有薪资的跳过
+
+                    // 方法2: 从文本行匹配
+                    if (!salary) {
+                        for (let i = 0; i < lines.length; i++) {
+                            if (/\\d+[-~]\\d+[Kk元]/.test(lines[i]) && lines[i].length < 30) {
+                                salary = lines[i];
+                                salIdx = i;
+                                break;
+                            }
+                        }
+                    }
+                    if (!salary) { skipReasons.noSalary++; return; }
 
                     // 岗位名称：薪资前一行，或链接文字第一行
                     let title = '';
-                    const salIdx = lines.indexOf(salary);
                     if (salIdx > 0) {
                         title = lines[salIdx - 1];
                     }
@@ -812,31 +945,31 @@ class BossScraper:
                     let experience = lines.find(x => /^\\d+[-~]\\d+年|^\\d+年|^经验不限$|^应届$|^在校$/.test(x) && x.length < 20) || '';
                     let education = lines.find(x => /^(本科|硕士|博士|大专|中专|中技|高中|学历不限|不限)$/.test(x)) || '';
 
+                    skipReasons.ok++;
                     cards.push({title, salary, company, city, experience, education, url: href, _debug: lines.slice(0, 5).join(' | ')});
                 });
+                debugInfo.skipReasons = skipReasons;
                 return {cards, debug: debugInfo};
             }""")
-        except Exception:
+        except Exception as e:
+            print(f"  [提取] JavaScript执行异常: {e}")
             return []
+
+        # 始终打印调试信息（无论是否有卡片）
+        debug_info = (rows or {}).get("debug", {})
+        skip = debug_info.get("skipReasons", {})
+        print(f"  [调试] 找到 {len((rows or {}).get('cards', []))} 个岗位卡片, 总链接数: {debug_info.get('totalLinks', 0)}")
+        print(f"  [调试] 跳过原因: 重复={skip.get('dup',0)}, 无薪资={skip.get('noSalary',0)}, 无标题={skip.get('noTitle',0)}, 标题不合规={skip.get('badTitle',0)}, 保留={skip.get('ok',0)}")
+        for i, s in enumerate(debug_info.get("sampleTexts", [])):
+            if isinstance(s, dict):
+                print(f"  [调试] 样本{i+1}: {s.get('text','')[:200]}")
+                print(f"  [调试]   薪资class={s.get('salaryClass','')}, data={s.get('dataAttrs','')}")
+                print(f"  [调试]   卡片HTML: {s.get('cardOuterHTML','')[:400]}")
+            else:
+                print(f"  [调试] 样本{i+1}: {s[:300]}")
 
         if not rows or not rows.get("cards"):
-            # 调试：打印页面上的链接信息
-            try:
-                debug = await self.page.evaluate("""() => {
-                    const links = document.querySelectorAll('a[href*="/job_detail/"]');
-                    return {
-                        count: links.length,
-                        hrefs: Array.from(links).slice(0, 5).map(a => a.getAttribute('href')),
-                        classes: Array.from(document.querySelectorAll('[class*="job"]')).slice(0, 10).map(e => e.className)
-                    };
-                }""")
-                print(f"  [调试] 页面链接数: {debug.get('count', 0)}, hrefs: {debug.get('hrefs', [])}, classes: {debug.get('classes', [])[:5]}")
-            except Exception:
-                pass
             return []
-
-        debug_info = rows.get("debug", {})
-        print(f"  [调试] 找到 {len(rows['cards'])} 个岗位卡片, 总链接数: {debug_info.get('totalLinks', 0)}, 去重后href数: {len(debug_info.get('hrefs', []))}")
 
         result = []
         seen = set()
@@ -851,9 +984,6 @@ class BossScraper:
             city = (row.get("city") or "").strip()
             experience = (row.get("experience") or "").strip()
             education = (row.get("education") or "").strip()
-
-            if not re.search(r'\d+[Kk元]', salary):
-                continue
 
             result.append({
                 "title": title,
@@ -955,7 +1085,7 @@ class BossScraper:
             # 外层超时调整为 70s，确保内层重试能完整执行（20s × 3 次 + 缓冲时间）
             return await asyncio.wait_for(self._fetch_detail_inner(url, result), timeout=70)
         except asyncio.TimeoutError:
-            print(f"  ❌ 详情抓取全局超时(70s): {url}")
+            print(f"  [FAIL] 详情抓取全局超时(70s): {url}")
             return result
 
     async def _fetch_detail_inner(self, url, result):
@@ -975,7 +1105,7 @@ class BossScraper:
                         timeout=20
                     )
                 except asyncio.TimeoutError:
-                    print(f"  ⚠️ 页面导航超时(20s) ({attempt+1}/3): {url}")
+                    print(f"  [WARN] 页面导航超时(20s) ({attempt+1}/3): {url}")
                     if attempt < 2:
                         try:
                             await self.page.goto("about:blank", timeout=3000)
@@ -992,7 +1122,7 @@ class BossScraper:
                 # 验证是否真正跳转到了目标页面
                 current = self.page.url
                 if "job_detail" not in current and "job/" not in current:
-                    print(f"  ⚠️ 页面未跳转到详情页，当前URL: {current}")
+                    print(f"  [WARN] 页面未跳转到详情页，当前URL: {current}")
                     if attempt < 2:
                         # 尝试刷新页面恢复
                         try:
@@ -1005,7 +1135,7 @@ class BossScraper:
                 print(f"  [详情] 页面加载完成: {current}")
                 break
             except Exception as e:
-                print(f"  ⚠️ 详情页异常 ({attempt+1}/3): {e}")
+                print(f"  [WARN] 详情页异常 ({attempt+1}/3): {e}")
                 if attempt < 2:
                     # 尝试导航到空白页重置浏览器状态
                     try:
@@ -1014,7 +1144,7 @@ class BossScraper:
                         pass
                     await async_pause(1, 2)
                 else:
-                    print(f"  ❌ 详情页失败: {url}")
+                    print(f"  [FAIL] 详情页失败: {url}")
                     return result
         try:
             await async_pause(0.5, 1)
@@ -1084,9 +1214,9 @@ class BossScraper:
                 result["hr_activity"] = (hr_info.get("activity") or "").strip()
                 print(f"  [详情] HR信息提取完成: {result['hr_name']} | {result['hr_activity']}")
             except asyncio.TimeoutError:
-                print(f"  ⚠️ HR信息提取超时(10s)")
+                print(f"  [WARN] HR信息提取超时(10s)")
             except Exception as e:
-                print(f"  ⚠️ HR信息提取异常: {e}")
+                print(f"  [WARN] HR信息提取异常: {e}")
 
             # ── 提取岗位描述（带超时）──
             desc_text = ""
@@ -1102,20 +1232,20 @@ class BossScraper:
                     try:
                         el = await asyncio.wait_for(self.page.query_selector(sel), timeout=5)
                     except asyncio.TimeoutError:
-                        print(f"  ⚠️ 选择器 {sel} 超时")
+                        print(f"  [WARN] 选择器 {sel} 超时")
                         continue
                     if el:
                         try:
                             desc_text = (await asyncio.wait_for(el.inner_text(), timeout=5)).strip()
                         except asyncio.TimeoutError:
-                            print(f"  ⚠️ 元素文本提取超时")
+                            print(f"  [WARN] 元素文本提取超时")
                             continue
                         if desc_text and len(desc_text) > 20:
                             print(f"  [详情] CSS描述提取成功: {len(desc_text)}字 (选择器: {sel})")
                             break
                         desc_text = ""
             except Exception as e:
-                print(f"  ⚠️ CSS描述提取异常: {e}")
+                print(f"  [WARN] CSS描述提取异常: {e}")
 
             print(f"  [详情] 开始提取页面文本...")
             # 再次关闭弹窗
@@ -1132,9 +1262,9 @@ class BossScraper:
                     timeout=8
                 )
             except asyncio.TimeoutError:
-                print(f"  ⚠️ JavaScript文本提取超时(8s)")
+                print(f"  [WARN] JavaScript文本提取超时(8s)")
             except Exception as e:
-                print(f"  ⚠️ JavaScript文本提取异常: {e}")
+                print(f"  [WARN] JavaScript文本提取异常: {e}")
             if not body:
                 # 最后尝试 inner_text
                 try:
@@ -1142,7 +1272,7 @@ class BossScraper:
                 except Exception:
                     pass
             if not body:
-                print(f"  ⚠️ 页面文本提取失败，跳过")
+                print(f"  [WARN] 页面文本提取失败，跳过")
                 return result
             lines = [l.strip() for l in body.split("\n") if l.strip()]
 
@@ -1223,7 +1353,7 @@ class BossScraper:
             print(f"  [详情] 提取完成: desc={len(result['description'])}字 HR={result['hr_name']} 活跃={result['hr_activity']}")
 
         except Exception as e:
-            print(f"  ⚠️ 数据提取异常: {e}")
+            print(f"  [WARN] 数据提取异常: {e}")
         return result
 
 
@@ -1281,7 +1411,7 @@ def output_report(jobs):
 def skill_report(gap):
     lines = ["# AI Agent 技能差距分析报告 · %s\n" % DATE_STR]
     lines.append("> 基于 BOSS 直聘 %d 个岗位\n---\n" % gap["total"])
-    lines.append("## 一、✅ 你已拥有的技能\n")
+    lines.append("## 一、[OK] 你已拥有的技能\n")
     for item in gap["have"]:
         lines.append("- **%s**: %d个岗位" % (item["skill"], item["count"]))
     lines.append("\n## 二、🔍 需要查漏补缺\n")
@@ -1310,7 +1440,7 @@ async def _async_main():
     keywords = [k.strip() for k in args.keywords.split(",")] if args.keywords else KEYWORDS
 
     if not STATE_FILE.exists() and not args.login:
-        print("⚠️ 请先运行: python3 boss_firefox.py --login")
+        print("[WARN] 请先运行: python3 boss_firefox.py --login")
         sys.exit(1)
 
     sc = BossScraper(headless=args.headless)
@@ -1331,7 +1461,7 @@ async def _async_main():
                 try:
                     jobs = await sc.search(kw, city_code)
                 except Exception as e:
-                    print("  ⚠️ 失败: %s" % e)
+                    print("  [WARN] 失败: %s" % e)
                     continue
                 ok = []
                 for j in jobs:
@@ -1343,13 +1473,13 @@ async def _async_main():
                 print("  %d条, 去重后%d条(累计%d)" % (len(jobs), len(ok), len(all_jobs)))
                 all_jobs.extend(ok)
                 if len(all_jobs) >= args.max_jobs:
-                    print("  📊 已达上限%d条" % args.max_jobs)
+                    print("  [STATS] 已达上限%d条" % args.max_jobs)
                     break
                 await async_pause(2, 4)
             if len(all_jobs) >= args.max_jobs:
                 break
 
-        print("\n📊 共%d条" % len(all_jobs))
+        print("\n[STATS] 共%d条" % len(all_jobs))
         if not all_jobs:
             return
 
@@ -1371,19 +1501,19 @@ async def _async_main():
             j["hr_name"] = detail.get("hr_name", "")
             j["hr_title"] = detail.get("hr_title", "")
             if detail["description"]:
-                print("✅ %d字 | HR: %s" % (len(detail["description"]), j["hr_name"] or "未识别"))
+                print("[OK] %d字 | HR: %s" % (len(detail["description"]), j["hr_name"] or "未识别"))
             else:
-                print("⚠️ 无描述 | HR: %s" % (j["hr_name"] or "未识别"))
+                print("[WARN] 无描述 | HR: %s" % (j["hr_name"] or "未识别"))
             await asyncio.sleep(random.uniform(1.5, 3.0))
 
-        print("📊 详情采集: %d/%d条成功" % (success, len(all_jobs)))
+        print("[STATS] 详情采集: %d/%d条成功" % (success, len(all_jobs)))
 
         gap = skill_gap(all_jobs)
         print("\n" + "=" * 60)
-        print("📊 技能差距分析")
+        print("[STATS] 技能差距分析")
         print("=" * 60)
         for item in gap["have"][:10]:
-            print("  ✅ %s: %d个岗位" % (item["skill"], item["count"]))
+            print("  [OK] %s: %d个岗位" % (item["skill"], item["count"]))
         for item in gap["missing"][:15]:
             p = "🔴" if item["count"] >= 10 else "🟡" if item["count"] >= 5 else "🟢"
             print("  %s %s: %d个岗位" % (p, item["skill"], item["count"]))
@@ -1412,8 +1542,8 @@ async def _async_main():
             writer.writeheader()
             for j in all_jobs:
                 writer.writerow({k: j.get(k, "") for k in writer.fieldnames})
-        print("📊 数据: %s/招聘数据_%s.csv" % (out_dir, DATE_STR))
-        print("\n✅ 完成！")
+        print("[STATS] 数据: %s/招聘数据_%s.csv" % (out_dir, DATE_STR))
+        print("\n[OK] 完成！")
 
     finally:
         await sc.close()
